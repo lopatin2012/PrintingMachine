@@ -1,0 +1,93 @@
+<!-- templates/print.html -->
+
+{% extends "base.html" %}
+
+{% block title %}Печать этикеток{% endblock %}
+
+{% block header_title %}Печать этикеток{% endblock %}
+
+{% block subtitle %}
+<div class="subtitle">Выберите шаблон и заполните данные для печати</div>
+{% endblock %}
+
+{% block back_link %}
+<a class="link-button" href="/"><- На главную</a>
+{% endblock %}
+
+{% block content %}
+<div class="panels">
+    {% if zpl_codes %}
+        <div class="panel">
+            <h2>Доступные шаблоны</h2>
+
+            <!-- Таблица шаблонов -->
+            <div style="overflow-x: auto;">
+                <table style="width: 100%; border-collapse: collapse; margin-top: 16px;">
+                    <thead>
+                        <tr style="background-color: #f8f9fa;">
+                            <th style="padding: 12px; text-align: left; border-bottom: 2px solid #dee2e6;">Название</th>
+                            <th style="padding: 12px; text-align: left; border-bottom: 2px solid #dee2e6;">Цех / Линия</th>
+                            <th style="padding: 12px; text-align: left; border-bottom: 2px solid #dee2e6;">Код маркировки</th>
+                            <th style="padding: 12px; text-align: left; border-bottom: 2px solid #dee2e6;">Код 1С</th>
+                            <th style="padding: 12px; text-align: left; border-bottom: 2px solid #dee2e6;">Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for template in zpl_codes %}
+                        <tr style="border-bottom: 1px solid #eee;">
+                            <td style="padding: 12px;">{{ template.name }}</td>
+                            <td style="padding: 12px;">
+                                {{ template.workshop }}<br>
+                                <small style="color: var(--gray);">Линия: {{ template.line }}</small>
+                            </td>
+                            <td style="padding: 12px;">{{ template.code }}</td>
+                            <td style="padding: 12px;">{{ template.product_1c }}</td>
+                            <td style="padding: 12px;">
+                                <button
+                                    class="link-button secondary toggle-form-btn"
+                                    data-template-id="{{ template.id }}"
+                                    style="padding: 6px 12px; font-size: 13px;"
+                                >
+                                    🖨️ Печатать
+                                </button>
+                            </td>
+                        </tr>
+
+                        <!-- Скрытая форма для этого шаблона -->
+                        <tr class="print-form-row" data-template-id="{{ template.id }}" style="display: none;">
+                            <td colspan="5" style="padding: 0; background-color: #f8f9fa;">
+                                <form class="print-form" data-template-id="{{ template.id }}" style="padding: 16px; border-top: 1px solid #dee2e6;">
+                                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 12px;">
+                                        <input type="text" name="batch" placeholder="Партия (11(091225))" required>
+                                        <input type="text" name="marking_date" placeholder="Дата маркировки (ГГГГ-ММ-ДД)" required>
+                                        <input type="text" name="expiration_date" placeholder="Годен до (ГГГГ-ММ-ДД)" required>
+                                        <input type="number" name="start_box_number" placeholder="Нач. коробка" value="1" min="1" required>
+                                        <input type="number" name="quantity" placeholder="Количество" value="1" min="1" max="1000" required>
+                                        <input type="text" name="printer_ip" placeholder="IP принтера" value="192.168.1.100" required>
+                                        <input type="number" name="printer_port" placeholder="Порт" value="9100" min="1" max="65535" required>
+                                    </div>
+                                    <div style="display: flex; gap: 10px;">
+                                        <button type="submit" class="link-button secondary" style="flex: 1;">Отправить на печать</button>
+                                        <button type="button" class="link-button toggle-form-btn" data-template-id="{{ template.id }}">Закрыть</button>
+                                    </div>
+                                    <div class="form-message" style="margin-top: 8px; min-height: 20px; font-weight: bold;"></div>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    {% else %}
+        <div class="panel">
+            <h2>Нет доступных шаблонов</h2>
+            <p>Добавьте ZPL-шаблоны в разделе <a href="/zpl_preview_page">Предпросмотр ZPL</a>.</p>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/print_tool.js"></script>
+{% endblock %}

@@ -1,0 +1,177 @@
+/* ============================================
+   СТРАНИЦА УПРАВЛЕНИЯ РОЛЯМИ
+   ============================================ */
+
+.roles-container {
+    background: white;
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: var(--shadow);
+    margin-bottom: 24px;
+}
+
+/* Бейджи ролей */
+.role-name.admin {
+    color: #c82333;
+    font-weight: 600;
+}
+
+.role-name.editor {
+    color: #8e24aa;
+    font-weight: 600;
+}
+
+.role-name.user {
+    color: #17a2b8;
+    font-weight: 600;
+}
+
+/* Права доступа */
+.role-permissions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-height: 24px;
+}
+
+.permission-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.permission-badge.admin {
+    background: rgba(200, 35, 51, 0.15);
+    color: #a71d2a;
+}
+
+.permission-badge.editor {
+    background: rgba(142, 36, 170, 0.15);
+    color: #7b2491;
+}
+
+.permission-badge.user {
+    background: rgba(23, 162, 184, 0.15);
+    color: #138496;
+}
+
+/* Форма ролей */
+.role-flags {
+    margin-top: 8px;
+}
+
+.checkbox-group {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 8px;
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    padding: 8px;
+    border-radius: 8px;
+    transition: background 0.2s;
+}
+
+.checkbox-label:hover {
+    background: #f8f9fa;
+}
+
+.checkbox-custom {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 2px solid var(--gray-300);
+    border-radius: 4px;
+    position: relative;
+    flex-shrink: 0;
+}
+
+.checkbox-label input[type="checkbox"] {
+    position: absolute;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"]:checked + .checkbox-custom {
+    background: var(--primary);
+    border-color: var(--primary);
+}
+
+.checkbox-label input[type="checkbox"]:checked + .checkbox-custom::after {
+    content: '✓';
+    position: absolute;
+    color: white;
+    font-size: 14px;
+    top: -2px;
+    left: 4px;
+}
+
+.checkbox-text {
+    font-size: 14px;
+    color: var(--gray-900);
+}
+
+.role-warning {
+    background: #fff3cd;
+    border: 1px solid #ffeaa7;
+    color: #856404;
+    padding: 10px 15px;
+    border-radius: 8px;
+    font-size: 13px;
+    margin-top: 8px;
+}
+
+/* Адаптивность */
+@media (max-width: 768px) {
+    .data-table {
+        font-size: 13px;
+    }
+
+    .data-table th,
+    .data-table td {
+        padding: 10px 8px;
+    }
+
+    .modal-content {
+        padding: 24px;
+        margin: 16px;
+    }
+
+    .checkbox-group {
+        gap: 8px;
+    }
+}
+
+@media (max-width: 480px) {
+    .roles-container {
+        padding: 16px;
+    }
+
+    .data-table {
+        font-size: 12px;
+    }
+
+    .page-header h2 {
+        font-size: 20px;
+    }
+
+    .actions-cell {
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .table-btn {
+        width: 100%;
+        justify-content: center;
+        font-size: 12px;
+        padding: 6px 12px;
+    }
+}

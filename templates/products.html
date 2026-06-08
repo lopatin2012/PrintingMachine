@@ -1,0 +1,723 @@
+<!-- templates/products.html -->
+{% extends "base.html" %}
+
+{% block title %}Управление продуктами{% endblock %}
+
+{% block css %}
+<link rel="stylesheet" href="/static/css/products.css">
+{% endblock %}
+
+{% block header_title %}Управление продуктами{% endblock %}
+
+{% block subtitle %}
+<div class="subtitle">Управление товарами и их данными для печати этикеток</div>
+{% endblock %}
+
+{% block back_link %}
+<a class="link-button" href="/">← На главную</a>
+{% endblock %}
+
+{% block content %}
+<div class="products-container">
+    <!-- Меню управления продуктами -->
+    <div class="page-header">
+        <h2>📦 Список продуктов</h2>
+        {% if user and user.role and user.role.is_admin %}
+        <button id="addProductBtn" class="action-button primary">
+            <span class="button-icon">➕</span>
+            <span class="button-text">Добавить продукт</span>
+        </button>
+        {% endif %}
+    </div>
+
+    <!-- Поиск и фильтры -->
+    <div class="filter-section">
+        <div class="search-group">
+            <label for="searchInput" class="filter-label">Поиск:</label>
+            <div class="search-wrapper">
+                <input
+                    type="text"
+                    id="searchInput"
+                    class="search-input"
+                    placeholder="По наименованию, коду 1С или GTIN..."
+                >
+                <button id="clearSearch" class="clear-btn">✕</button>
+            </div>
+        </div>
+
+        <div class="filter-group">
+            <label for="expirationFilter" class="filter-label">Срок годности:</label>
+            <select id="expirationFilter" class="filter-select">
+                <option value="">Любой</option>
+                <option value="lt7">Менее 7 дней</option>
+                <option value="lt30">Менее 30 дней</option>
+                <option value="gt30">Более 30 дней</option>
+                <option value="gt180">Более 180 дней</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- Уведомления -->
+    {% if success %}
+    <div class="alert success">
+        <span>{{ success }}</span>
+    </div>
+    {% endif %}
+
+    {% if error %}
+    <div class="alert error">
+        <span>{{ error }}</span>
+    </div>
+    {% endif %}
+
+    <!-- Таблица продуктов -->
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>№</th>
+                    <th>Наименование</th>
+                    <th>Код 1С</th>
+                    <th>GTIN</th>
+                    <th>Срок годности</th>
+                    <th>Шаблонов</th>
+                    <th>Дата создания</th>
+                    {% if user and user.role and user.role.is_admin %}
+                    <th>Действия</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody id="productsTableBody">
+                {% if products %}
+                {% for product in products %}
+                <tr data-gtin="{{ product.gtin }}"
+                    data-expiration="{{ product.date_expiration }}"
+                    data-search="{{ product.name|lower }} {{ product.current_code_1c|lower }} {{ product.gtin|lower }}">
+                    {# Нумерация с учётом пагинации #}
+                    <td>{{ (page - 1) * per_page + loop.index }}</td>
+                    <td>
+                        <strong class="product-name">{{ product.name }}</strong>
+                        {% if product.other_codes_1c %}
+                        <span class="other-codes-badge" title="Доп. коды: {{ product.other_codes_1c }}">➕</span>
+                        {% endif %}
+                    </td>
+                    <td class="code-cell">
+                        <span class="code-badge primary">{{ product.current_code_1c }}</span>
+                    </td>
+                    <td class="code-cell">
+                        <span class="code-badge gtin">{{ product.gtin }}</span>
+                    </td>
+                    <td>
+                        <span class="expiration-badge
+                            {% if product.date_expiration < 7 %}critical
+                            {% elif product.date_expiration < 30 %}warning
+                            {% else %}normal{% endif %}">
+                            {{ product.date_expiration }} дн.
+                        </span>
+                    </td>
+                    <td>
+                        <span class="templates-count">
+                            {{ product.code_templates|length if product.code_templates else 0 }}
+                        </span>
+                    </td>
+                    <td>{{ product.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+                    {% if user and user.role and user.role.is_admin %}
+                    <td class="actions-cell">
+                        <button class="table-btn edit-btn"
+                                onclick='editProduct({{ product.id|string|tojson|safe }}, {{ product.name|tojson|safe }}, {{ product.current_code_1c|tojson|safe }}, {{ product.gtin|tojson|safe }}, {{ product.other_codes_1c|tojson|safe if product.other_codes_1c else "null"|tojson|safe }}, {{ product.date_expiration }})'>
+                            ✏️ Редактировать
+                        </button>
+                        <button class="table-btn delete-btn"
+                                onclick='deleteProduct({{ product.id|string|tojson|safe }}, {{ product.name|tojson|safe }})'>
+                            🗑️ Удалить
+                        </button>
+                        <button class="table-btn template-btn"
+                                onclick='showTemplates({{ product.id|string|tojson|safe }}, {{ product.name|tojson|safe }})'>
+                            📄 Шаблоны
+                        </button>
+                    </td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+                {% else %}
+                <tr>
+                    <td colspan="8" class="empty-row">📦 Нет продуктов по заданным критериям</td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+
+    {# Пагинатор #}
+    {% if total_pages > 1 %}
+    <div class="pagination-wrapper">
+        <div class="pagination-info">
+            Показано {{ (page - 1) * per_page + 1 }}–{{ [page * per_page, total_items]|min }} из {{ total_items }}
+        </div>
+
+        <nav class="pagination" aria-label="Навигация по страницам">
+            {# Кнопка "Назад" #}
+            {% if has_prev %}
+            <a href="{{ build_pagination_url(page - 1, pagination_params) }}"
+               class="pagination-link pagination-arrow"
+               aria-label="Предыдущая страница">
+                ←
+            </a>
+            {% else %}
+            <span class="pagination-link pagination-arrow disabled">←</span>
+            {% endif %}
+
+            {# Номера страниц #}
+            {% for p in page_range %}
+                {% if p == '...' %}
+                <span class="pagination-ellipsis">…</span>
+                {% elif p == page %}
+                <span class="pagination-link pagination-link-active">{{ p }}</span>
+                {% else %}
+                <a href="{{ build_pagination_url(p, pagination_params) }}"
+                   class="pagination-link">{{ p }}</a>
+                {% endif %}
+            {% endfor %}
+
+            {# Кнопка "Вперёд" #}
+            {% if has_next %}
+            <a href="{{ build_pagination_url(page + 1, pagination_params) }}"
+               class="pagination-link pagination-arrow"
+               aria-label="Следующая страница">
+                →
+            </a>
+            {% else %}
+            <span class="pagination-link pagination-arrow disabled">→</span>
+            {% endif %}
+        </nav>
+
+        {# Выбор количества записей на странице #}
+        <div class="pagination-per-page">
+            <label for="perPageSelect" class="per-page-label">На странице:</label>
+            <select id="perPageSelect" class="per-page-select" onchange="changePerPage(this.value)">
+                {% for option in [10, 20, 50, 100] %}
+                <option value="{{ option }}" {% if per_page == option %}selected{% endif %}>
+                    {{ option }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Форма добавления/редактирования -->
+    <div id="productFormModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="formTitle">➕ Добавить продукт</h3>
+                <button class="close-btn" onclick="closeProductForm()">&times;</button>
+            </div>
+
+            <form id="productForm" method="post" action="/products">
+                <input type="hidden" id="productId" name="id">
+
+                <div class="form-group">
+                    <label for="productName" class="form-label">
+                        <span class="label-icon">📦</span>
+                        Наименование продукта
+                    </label>
+                    <div class="input-wrapper">
+                        <input
+                            type="text"
+                            id="productName"
+                            name="name"
+                            required
+                            class="form-input"
+                            placeholder="Молоко 3.2%, 1л, ультрапастеризованное"
+                            maxlength="200"
+                        >
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="productCode1C" class="form-label">
+                        <span class="label-icon">🔢</span>
+                        Текущий код 1С
+                    </label>
+                    <div class="input-wrapper">
+                        <input
+                            type="text"
+                            id="productCode1C"
+                            name="current_code_1c"
+                            required
+                            class="form-input"
+                            placeholder="000000123456"
+                            maxlength="50"
+                        >
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="productGtin" class="form-label">
+                        <span class="label-icon">🆔</span>
+                        GTIN
+                    </label>
+                    <div class="input-wrapper">
+                        <input
+                            type="text"
+                            id="productGtin"
+                            name="gtin"
+                            required
+                            class="form-input"
+                            placeholder="04601234567890"
+                            maxlength="50"
+                        >
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="productOtherCodes" class="form-label">
+                        <span class="label-icon">📎</span>
+                        Другие коды 1С
+                    </label>
+                    <div class="input-wrapper">
+                        <textarea
+                            id="productOtherCodes"
+                            name="other_codes_1c"
+                            class="form-input"
+                            placeholder="Дополнительные коды товара (через запятую)"
+                            rows="3"
+                        ></textarea>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="productExpiration" class="form-label">
+                        <span class="label-icon">📅</span>
+                        Срок годности (дней)
+                    </label>
+                    <div class="input-wrapper">
+                        <input
+                            type="number"
+                            id="productExpiration"
+                            name="date_expiration"
+                            required
+                            class="form-input"
+                            value="180"
+                            min="0"
+                            max="3650"
+                        >
+                    </div>
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="btn-secondary" onclick="closeProductForm()">Отмена</button>
+                    <button type="submit" class="btn-submit" id="formSubmitBtn">
+                        <span class="btn-text" id="formSubmitText">Добавить продукт</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Модальное окно шаблонов -->
+    <div id="templatesModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="templatesTitle">📄 Шаблоны для продукта: <span id="productNameInTemplates"></span></h3>
+                <button class="close-btn" onclick="closeTemplatesModal()">&times;</button>
+            </div>
+
+            <div class="templates-list" id="templatesList">
+                <!-- Заполняется динамически -->
+                <p class="empty-templates">Нет шаблонов печати для этого продукта</p>
+            </div>
+
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="closeTemplatesModal()">Закрыть</button>
+                <a id="createTemplateLink" class="btn-submit" href="#">➕ Создать шаблон</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Открыть форму добавления
+function openAddProductForm() {
+    document.getElementById('formTitle').textContent = '➕ Добавить продукт';
+    document.getElementById('formSubmitText').textContent = 'Добавить продукт';
+    document.getElementById('productForm').action = '/products';
+    document.getElementById('productId').value = '';
+    document.getElementById('productName').value = '';
+    document.getElementById('productCode1C').value = '';
+    document.getElementById('productGtin').value = '';
+    document.getElementById('productOtherCodes').value = '';
+    document.getElementById('productExpiration').value = '180';
+    document.getElementById('productFormModal').classList.remove('hidden');
+}
+
+// Открыть форму редактирования
+function editProduct(id, name, code1c, gtin, otherCodes, expiration) {
+    document.getElementById('formTitle').textContent = '✏️ Редактировать продукт';
+    document.getElementById('formSubmitText').textContent = 'Сохранить изменения';
+    document.getElementById('productForm').action = `/products/${id}`;
+    document.getElementById('productId').value = id;
+    document.getElementById('productName').value = name.trim();
+    document.getElementById('productCode1C').value = code1c.trim();
+    document.getElementById('productGtin').value = gtin.trim();
+    document.getElementById('productOtherCodes').value = otherCodes && otherCodes !== 'null' ? otherCodes.trim() : '';
+    document.getElementById('productExpiration').value = expiration;
+    document.getElementById('productFormModal').classList.remove('hidden');
+    document.getElementById('productName').focus();
+}
+
+// Закрыть форму продукта
+function closeProductForm() {
+    document.getElementById('productFormModal').classList.add('hidden');
+    resetFormButton();
+}
+
+// Удалить продукт
+function deleteProduct(id, name) {
+    if (confirm(`Вы уверены, что хотите удалить продукт "${name}"?\n\n⚠️ Внимание: Все связанные шаблоны печати также будут удалены!`)) {
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = `/products/${id}/delete`;
+        document.body.appendChild(form);
+        form.submit();
+    }
+}
+
+// Показать шаблоны продукта
+function showTemplates(productId, productName) {
+    document.getElementById('productNameInTemplates').textContent = productName;
+    document.getElementById('createTemplateLink').href = `/templates/new?product_id=${productId}`;
+
+    // Показываем загрузку
+    document.getElementById('templatesList').innerHTML = `
+        <div class="preview-placeholder">
+            <div class="preview-spinner"></div>
+            <p>Загрузка шаблонов...</p>
+        </div>
+    `;
+
+    document.getElementById('templatesModal').classList.remove('hidden');
+
+    // Загрузка шаблонов через AJAX
+    fetch(`/api/templates/product/${productId}`)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`Сервер вернул ошибку ${response.status}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            const templatesList = document.getElementById('templatesList');
+
+            if (data.templates && data.templates.length > 0) {
+                // Отображаем список шаблонов БЕЗ кнопки редактирования каждого шаблона
+                templatesList.innerHTML = data.templates.map(template => `
+                    <div class="template-item">
+                        <div class="template-header">
+                            <strong>${escapeHtml(template.name)}</strong>
+                            <span class="template-badge ${template.is_active ? 'active' : 'inactive'}">
+                                ${template.is_active ? 'Активен' : 'Неактивен'}
+                            </span>
+                        </div>
+                        <div class="template-meta">
+                            <span class="template-meta-item">🖨️ Принтер: ${escapeHtml(template.printer_name)}</span>
+                            <span class="template-meta-item">📅 Создан: ${new Date(template.created_at).toLocaleDateString('ru-RU')}</span>
+                        </div>
+                    </div>
+                `).join('');
+
+                // Единая кнопка для перехода к управлению шаблонами
+                templatesList.innerHTML += `
+                    <div class="template-actions" style="text-align: center; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border);">
+                        <a href="/templates?product_filter=${productId}" class="btn-submit">
+                            📄 Управлять шаблонами на странице шаблонов
+                        </a>
+                        <div style="margin-top: 12px; font-size: 13px; color: #666;">
+                            Здесь вы сможете редактировать, активировать или удалить шаблоны
+                        </div>
+                    </div>
+                `;
+            } else {
+                templatesList.innerHTML = `
+                    <div class="empty-templates">
+                        <div style="font-size: 48px; margin-bottom: 16px;">📄</div>
+                        <p>Нет шаблонов печати для продукта "${escapeHtml(productName)}"</p>
+                        <div style="margin-top: 20px;">
+                            <a href="/templates/new?product_id=${productId}" class="btn-submit">
+                                ➕ Создать первый шаблон
+                            </a>
+                        </div>
+                    </div>
+                `;
+            }
+        })
+        .catch(error => {
+            console.error('Ошибка загрузки шаблонов:', error);
+            document.getElementById('templatesList').innerHTML = `
+                <div class="alert error">
+                    <div style="font-size: 32px; margin-bottom: 12px;">⚠️</div>
+                    <p>Не удалось загрузить шаблоны:</p>
+                    <p style="font-weight: bold; margin-top: 8px;">${escapeHtml(error.message || 'Неизвестная ошибка')}</p>
+                    <div style="margin-top: 20px;">
+                        <a href="/templates/new?product_id=${productId}" class="btn-submit">
+                            ➕ Создать шаблон вручную
+                        </a>
+                        <div style="margin-top: 10px;">
+                            <a href="/templates" class="btn-secondary">
+                                📄 Перейти к списку всех шаблонов
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+}
+
+// Вспомогательная функция для экранирования HTML
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Закрыть модальное окно шаблонов
+function closeTemplatesModal() {
+    document.getElementById('templatesModal').classList.add('hidden');
+}
+
+// Поиск и фильтрация
+function applyFilters() {
+    const searchTerm = document.getElementById('searchInput').value.toLowerCase().trim();
+    const expirationFilter = document.getElementById('expirationFilter').value;
+
+    const rows = document.querySelectorAll('#productsTableBody tr');
+
+    rows.forEach(row => {
+        const searchContent = row.dataset.search || '';
+        const gtin = row.dataset.gtin || '';
+        const expiration = parseInt(row.dataset.expiration) || 0;
+
+        // Фильтр поиска
+        const searchMatch = !searchTerm || searchContent.includes(searchTerm);
+
+        // Фильтр срока годности
+        let expirationMatch = true;
+        if (expirationFilter) {
+            switch (expirationFilter) {
+                case 'lt7':
+                    expirationMatch = expiration < 7;
+                    break;
+                case 'lt30':
+                    expirationMatch = expiration < 30;
+                    break;
+                case 'gt30':
+                    expirationMatch = expiration >= 30;
+                    break;
+                case 'gt180':
+                    expirationMatch = expiration >= 180;
+                    break;
+            }
+        }
+
+        row.style.display = (searchMatch && expirationMatch) ? '' : 'none';
+    });
+}
+
+// Очистить поиск
+function clearSearch() {
+    document.getElementById('searchInput').value = '';
+    applyFilters();
+}
+
+// Сброс кнопки формы
+function resetFormButton() {
+    const submitBtn = document.getElementById('formSubmitBtn');
+    submitBtn.disabled = false;
+    submitBtn.innerHTML = '<span class="btn-text" id="formSubmitText">Добавить продукт</span>';
+}
+
+// Инициализация после загрузки DOM
+document.addEventListener('DOMContentLoaded', function() {
+    // Кнопка добавления продукта
+    const addBtn = document.getElementById('addProductBtn');
+    if (addBtn) {
+        addBtn.addEventListener('click', openAddProductForm);
+    }
+
+    // Фильтры
+    const searchInput = document.getElementById('searchInput');
+    const expirationFilter = document.getElementById('expirationFilter');
+    const clearSearchBtn = document.getElementById('clearSearch');
+
+    if (searchInput) {
+        searchInput.addEventListener('input', applyFilters);
+        searchInput.addEventListener('keyup', function(e) {
+            if (e.key === 'Escape') {
+                this.value = '';
+                applyFilters();
+            }
+        });
+    }
+
+    if (expirationFilter) expirationFilter.addEventListener('change', applyFilters);
+    if (clearSearchBtn) clearSearchBtn.addEventListener('click', clearSearch);
+
+    // Закрытие модальных окон при клике вне их
+    // document.querySelectorAll('.modal').forEach(modal => {
+    //    modal.addEventListener('click', function(event) {
+    //        if (event.target === modal) {
+    //            if (modal.id === 'productFormModal') {
+    //                closeProductForm();
+    //            } else if (modal.id === 'templatesModal') {
+    //                closeTemplatesModal();
+    //            }
+    //        }
+    //    });
+    // });
+
+    // Валидация формы
+    const form = document.getElementById('productForm');
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            const name = document.getElementById('productName').value.trim();
+            const code1c = document.getElementById('productCode1C').value.trim();
+            const gtin = document.getElementById('productGtin').value.trim();
+            const expiration = parseInt(document.getElementById('productExpiration').value) || 0;
+
+            // Валидация наименования
+            if (name.length < 2) {
+                e.preventDefault();
+                alert('Наименование продукта должно содержать минимум 2 символа');
+                document.getElementById('productName').focus();
+                return false;
+            }
+
+            if (name.length > 200) {
+                e.preventDefault();
+                alert('Наименование продукта не должно превышать 200 символов');
+                document.getElementById('productName').focus();
+                return false;
+            }
+
+            // Валидация кода 1С
+            if (code1c.length < 1) {
+                e.preventDefault();
+                alert('Код 1С обязателен');
+                document.getElementById('productCode1C').focus();
+                return false;
+            }
+
+            if (code1c.length > 50) {
+                e.preventDefault();
+                alert('Код 1С не должен превышать 50 символов');
+                document.getElementById('productCode1C').focus();
+                return false;
+            }
+
+            // Валидация GTIN (13-14 цифр)
+            if (!/^\d{13,14}$/.test(gtin)) {
+                e.preventDefault();
+                alert('GTIN должен содержать 13 или 14 цифр (без пробелов и дефисов)');
+                document.getElementById('productGtin').focus();
+                return false;
+            }
+
+            // Валидация срока годности
+            if (expiration < 0 || expiration > 3650) {
+                e.preventDefault();
+                alert('Срок годности должен быть от 0 до 3650 дней');
+                document.getElementById('productExpiration').focus();
+                return false;
+            }
+
+            // Показать состояние загрузки
+            const submitBtn = document.getElementById('formSubmitBtn');
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<span class="btn-text">Сохранение...</span><span class="btn-spinner"></span>';
+        });
+    }
+
+    // Обработка нажатия клавиши Escape
+    document.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape') {
+            closeProductForm();
+            closeTemplatesModal();
+        }
+    });
+});
+
+// Построение URL для пагинации с сохранением параметров
+function buildPaginationUrl(page, params = {}) {
+    const urlParams = new URLSearchParams(window.location.search);
+    urlParams.set('page', page);
+
+    for (const [key, value] of Object.entries(params)) {
+        if (value) {
+            urlParams.set(key, value);
+        } else {
+            urlParams.delete(key);
+        }
+    }
+
+    return `/products?${urlParams.toString()}`;
+}
+
+// Смена количества записей на странице
+function changePerPage(perPage) {
+    const urlParams = new URLSearchParams(window.location.search);
+    urlParams.set('per_page', perPage);
+    urlParams.set('page', '1'); // Сброс на первую страницу
+
+    // Сохраняем текущие фильтры
+    const search = document.getElementById('searchInput')?.value;
+    const expiration = document.getElementById('expirationFilter')?.value;
+
+    if (search) urlParams.set('search', search);
+    if (expiration) urlParams.set('expiration_filter', expiration);
+
+    window.location.href = `/products?${urlParams.toString()}`;
+}
+
+// Обновление applyFilters для работы с пагинацией
+const originalApplyFilters = applyFilters;
+applyFilters = function() {
+    originalApplyFilters();
+    // При фильтрации сбрасываем на первую страницу через URL
+    const urlParams = new URLSearchParams(window.location.search);
+    urlParams.set('page', '1');
+
+    const search = document.getElementById('searchInput')?.value;
+    const expiration = document.getElementById('expirationFilter')?.value;
+
+    if (search) urlParams.set('search', search);
+    else urlParams.delete('search');
+
+    if (expiration) urlParams.set('expiration_filter', expiration);
+    else urlParams.delete('expiration_filter');
+
+    // Обновляем URL без перезагрузки для корректной работы пагинатора
+    const newUrl = `/products?${urlParams.toString()}`;
+    history.replaceState(null, '', newUrl);
+};
+
+// Инициализация: восстановление параметров фильтров из URL при загрузке
+document.addEventListener('DOMContentLoaded', function() {
+    // ... ваш существующий код инициализации ...
+
+    // Восстановление параметров из URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const searchParam = urlParams.get('search');
+    const expirationParam = urlParams.get('expiration_filter');
+
+    if (searchParam && document.getElementById('searchInput')) {
+        document.getElementById('searchInput').value = searchParam;
+    }
+    if (expirationParam && document.getElementById('expirationFilter')) {
+        document.getElementById('expirationFilter').value = expirationParam;
+    }
+});
+</script>
+{% endblock %}

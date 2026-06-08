@@ -1,0 +1,136 @@
+<!-- templates/workshops.html -->
+
+{% extends "base.html" %}
+
+{% block title %}Управление цехами{% endblock %}
+
+{% block header_title %}Управление цехами{% endblock %}
+
+{% block subtitle %}
+<div class="subtitle">Управление цехами</div>
+{% endblock %}
+
+{% block css %}
+<link rel="stylesheet" href="/static/css/workshops.css">
+{% endblock %}
+
+{% block back_link %}
+<a class="link-button" href="/"><- На главную</a>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <!-- Меню управления цехами -->
+    <div class="page-header">
+        <h2>📋 Список цехов</h2>
+        {% if user and user.role and user.role.is_admin %}
+        <button id="addWorkshopBtn" class="action-button primary">
+            <span class="button-icon">➕</span>
+            <span class="button-text">Добавить цех</span>
+        </button>
+        {% endif %}
+    </div>
+
+    <!-- Уведомление -->
+    {% if success %}
+    <div class="alert success">
+        <span class="alert-text">{{ success }}</span>
+    </div>
+    {% endif %}
+
+    {% if error %}
+    <div class="alert error">
+        <span>{{ error }}</span>
+    </div>
+    {% endif %}
+
+    <!-- Таблица цехов -->
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+            <tr>
+                <th>№</th>
+                <th>Наименование</th>
+                <th>Дата создания</th>
+                <th>Дата изменения</th>
+                {% if user and user.role and user.role.is_admin %}
+                <th>Действия</th>
+                {% endif %}
+            </tr>
+            </thead>
+            <tbody>
+            {% if workshops %}
+            {% for workshop in workshops %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td><strong>{{ workshop.name }}</strong></td>
+                <td>{{ workshop.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+                <td>{{ workshop.edited_at.strftime('%d.%m.%Y %H:%M') }}</td>
+                {% if user and user.role and user.role.is_admin %}
+                <td class="actions-cell">
+                    <button class="table-btn edit-btn"
+                            onclick='editWorkshop("{{ workshop.id }}", {{ workshop.name|tojson }})'>
+                        ✏️ Редактировать
+                    </button>
+                    <button class="table-btn delete-btn"
+                            onclick='deleteWorkshop("{{ workshop.id }}", {{ workshop.name|tojson }})'>
+                        🗑️ Удалить
+                    </button>
+                </td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+            {% else %}
+            <tr>
+                <td colspan="5" class="empty-row">📋 Нет цехов</td>
+            </tr>
+            {% endif %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Форма добавления/редактирования -->
+    <div id="workshopFormModal" class="modal hidden">
+        <div class="wrapper-form">
+            <div class="modal-header">
+                <h3 id="formTitle">➕ Добавить цех</h3>
+                <button class="close-btn" onclick="closeForm()">&times;</button>
+            </div>
+
+            <form id="workshopForm" method="post" action="/workshops">
+                <input type="hidden" id="workshopId" name="id">
+
+                <div class="form-group">
+                    <label for="workshopName" class="form-label">
+                        <span class="label-icon">🏭</span>
+                        Наименование цеха
+                    </label>
+                    <div class="input-wrapper">
+                        <input
+                                type="text"
+                                id="workshopName"
+                                name="name"
+                                required
+                                class="form-input"
+                                placeholder="Введите название цеха"
+                                maxlength="50"
+                        >
+                    </div>
+                    <small class="form-hint">Название должно быть уникальным, максимум 50 символов</small>
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="btn-secondary" onclick="closeForm()">Отмена</button>
+                    <button type="submit" class="btn-submit" id="formSubmitBtn">
+                        <span class="btn-text" id="formSubmitText">Добавить цех</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/workshop.js"></script>
+{% endblock %}

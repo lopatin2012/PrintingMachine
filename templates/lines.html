@@ -1,0 +1,175 @@
+<!-- templates/lines.html -->
+{% extends "base.html" %}
+
+{% block title %}Управление линиями{% endblock %}
+
+{% block header_title %}Управление линями{% endblock %}
+
+{% block subtitle %}
+<div class="subtitle">Управление линиями</div>
+{% endblock %}
+
+{% block css %}
+<link rel="stylesheet" href="/static/css/lines.css">
+{% endblock %}
+
+{% block back_link %}
+<a class="link-button" href="/"><- На главную</a>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <!-- Меню управления линиями -->
+    <div class="page-header">
+        <h2>📋 Список линий</h2>
+        {% if user and user.role and user.role.is_admin %}
+        <button id="addLineBtn" class="action-button primary">
+            <span class="button-icon">➕</span>
+            <span class="button-text">Добавить линию</span>
+        </button>
+        {% endif %}
+    </div>
+
+    <!-- Фильтр по цехам -->
+    <div class="filter-section">
+        <label for="workshopFilter" class="filter-label">Фильтр по цеху:</label>
+        <select id="workshopFilter" class="filter-select">
+            <option value="">Все цеха</option>
+            {% for workshop in workshops %}
+            <option value="{{ workshop.id }}">{{ workshop.name }}</option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <!-- Уведомление -->
+    {% if success %}
+    <div class="alert success">
+        <span class="alert-text">{{ success }}</span>
+    </div>
+    {% endif %}
+
+    {% if error %}
+    <div class="alert error">
+        <span>{{ error }}</span>
+    </div>
+    {% endif %}
+
+    <!-- Таблица линий -->
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+            <tr>
+                <th>№</th>
+                <th>Наименование</th>
+                <th>Цех</th>
+                <th>Дата создания</th>
+                <th>Дата изменения</th>
+                {% if user and user.role and user.role.is_admin %}
+                <th>Действия</th>
+                {% endif %}
+            </tr>
+            </thead>
+            <tbody id="linesTableBody">
+            {% if lines %}
+            {% for line in lines %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td>{{ line.name }}</td>
+                <td>
+                    {% if line.workshop %}
+                    <span class="workshop-badge">{{ line.workshop.name }}</span>
+                    {% else %}
+                    <span class="workshop-badge unknown">Цех не указан</span>
+                    {% endif %}
+                </td>
+                <td>{{ line.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+                <td>{{ line.edited_at.strftime('%d.%m.%Y %H:%M') }}</td>
+                {% if user and user.role and user.role.is_admin %}
+                <td class="actions-cell">
+                    <button class="table-btn edit-btn"
+                            onclick='editLine("{{ line.id }}", "{{ line.name|e }}", "{{ line.workshop_id }}")'>
+                        ✏️ Редактировать
+                    </button>
+                    <button class="table-btn delete-btn"
+                            onclick='deleteLine("{{ line.id }}", "{{ line.name|e }}")'>
+                        🗑️ Удалить
+                    </button>
+                </td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+            {% else %}
+            <tr>
+                <td colspan="6" class="empty-row">📋 Нет линий</td>
+            </tr>
+            {% endif %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Форма добавления/редактирования -->
+    <div id="lineFormModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="formTitle">➕ Добавить линию</h3>
+                <button class="close-btn" onclick="closeLineForm()">&times;</button>
+            </div>
+
+            <form id="lineForm" method="post" action="/lines">
+                <input type="hidden" id="lineId" name="id">
+
+                <div class="form-group">
+                    <label for="lineName" class="form-label">
+                        <span class="label-icon">🏭</span>
+                        Наименование линии
+                    </label>
+                    <div class="input-wrapper">
+                        <input
+                                type="text"
+                                id="lineName"
+                                name="name"
+                                required
+                                class="form-input"
+                                placeholder="Введите название линии"
+                                maxlength="50"
+                        >
+                    </div>
+                    <small class="form-hint">Название должно быть уникальным, максимум 50 символов</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="workshopId" class="form-label">
+                        <span class="label-icon">🏭</span>
+                        Цех
+                    </label>
+                    <div class="input-wrapper">
+                        <select
+                                id="workshopId"
+                                name="workshop_id"
+                                required
+                                class="form-input"
+                        >
+                            <option value="">Выберите цех</option>
+                            {% for workshop in workshops %}
+                            <option value="{{ workshop.id }}">{{ workshop.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <small class="form-hint">Линия будет привязана к выбранному цеху</small>
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="btn-secondary" onclick="closeLineForm()">Отмена</button>
+                    <button type="submit" class="btn-submit" id="formSubmitBtn">
+                        <span class="btn-text" id="formSubmitText">Добавить линию</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/line.js"></script>
+{% endblock %}

@@ -1,0 +1,438 @@
+<!-- templates/users.html -->
+{% extends "base.html" %}
+
+{% block title %}Управление пользователями{% endblock %}
+
+{% block css %}
+<link rel="stylesheet" href="/static/css/users.css">
+{% endblock %}
+
+{% block header_title %}Управление пользователями{% endblock %}
+
+{% block subtitle %}
+<div class="subtitle">Управление учётными записями пользователей системы</div>
+{% endblock %}
+
+{% block back_link %}
+<a class="link-button" href="/">← На главную</a>
+{% endblock %}
+
+{% block content %}
+<div class="users-container">
+    <!-- Меню управления пользователями -->
+    <div class="page-header">
+        <h2>👤 Список пользователей</h2>
+        {% if user and user.role and user.role.is_admin %}
+        <button id="addUserBtn" class="action-button primary">
+            <span class="button-icon">➕</span>
+            <span class="button-text">Добавить пользователя</span>
+        </button>
+        {% endif %}
+    </div>
+
+    <!-- Фильтры -->
+    <div class="filter-section">
+        <div class="filter-group">
+            <label for="roleFilter" class="filter-label">Роль:</label>
+            <select id="roleFilter" class="filter-select">
+                <option value="">Все роли</option>
+                <option value="admin">Администратор</option>
+                <option value="editor">Редактор</option>
+                <option value="user">Пользователь</option>
+            </select>
+        </div>
+        <div class="filter-group">
+            <label for="statusFilter" class="filter-label">Статус:</label>
+            <select id="statusFilter" class="filter-select">
+                <option value="">Все</option>
+                <option value="active">Активные</option>
+                <option value="inactive">Неактивные</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- Уведомления -->
+    {% if success %}
+    <div class="alert success">
+        <span>{{ success }}</span>
+    </div>
+    {% endif %}
+
+    {% if error %}
+    <div class="alert error">
+        <span>{{ error }}</span>
+    </div>
+    {% endif %}
+
+    <!-- Таблица пользователей -->
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>№</th>
+                    <th>Логин</th>
+                    <th>Email</th>
+                    <th>Роль</th>
+                    <th>Статус</th>
+                    <th>Дата создания</th>
+                    {% if user and user.role and user.role.is_admin %}
+                    <th>Действия</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody id="usersTableBody">
+                {% if users %}
+                {% for user_item in users %}
+                <tr data-role="{{ user_item.role.name|lower if user_item.role else 'user' }}"
+                    data-status="{{ 'active' if user_item.is_active else 'inactive' }}">
+                    <td>{{ loop.index }}</td>
+                    <td>
+                        <strong class="user-login">{{ user_item.login }}</strong>
+                        {% if user_item.id == user.id %}
+                        <span class="current-user-badge">Вы</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ user_item.email or '—' }}</td>
+                    <td>
+                        {% if user_item.role %}
+                        <span class="role-badge {{ user_item.role.name|lower }}">
+                            {{ user_item.role.name }}
+                        </span>
+                        {% else %}
+                        <span class="role-badge unknown">Без роли</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if user_item.is_active %}
+                        <span class="status-badge active">Активен</span>
+                        {% else %}
+                        <span class="status-badge inactive">Неактивен</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ user_item.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+                    {% if user and user.role and user.role.is_admin %}
+                    <td class="actions-cell">
+                        <button class="table-btn edit-btn"
+                                onclick='editUser({{ user_item.id|string|tojson|safe }}, {{ user_item.login|tojson|safe }}, {{ user_item.email|tojson|safe if user_item.email else "null"|tojson|safe }}, {{ user_item.role_id|string|tojson|safe }}, {{ user_item.is_active|tojson }})'>
+                            ✏️ Редактировать
+                        </button>
+                        {% if user_item.id != user.id %} {# Нельзя удалить себя #}
+                        <button class="table-btn {% if user_item.is_active %}delete-btn{% else %}restore-btn{% endif %}"
+                                onclick='{% if user_item.is_active %}deleteUser{% else %}restoreUser{% endif %}({{ user_item.id|string|tojson|safe }}, {{ user_item.login|tojson|safe }})'>
+                            {% if user_item.is_active %}🗑️ Деактивировать{% else %}✓ Активировать{% endif %}
+                        </button>
+                        {% endif %}
+                    </td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+                {% else %}
+                <tr>
+                    <td colspan="7" class="empty-row">👤 Нет пользователей</td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Форма добавления/редактирования -->
+    <div id="userFormModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="formTitle">➕ Добавить пользователя</h3>
+                <button class="close-btn" onclick="closeUserForm()">&times;</button>
+            </div>
+
+            <form id="userForm" method="post" action="/users">
+                <input type="hidden" id="userId" name="id">
+
+                <div class="form-group">
+                    <label for="userLogin" class="form-label">
+                        <span class="label-icon">👤</span>
+                        Логин
+                    </label>
+                    <div class="input-wrapper">
+                        <input
+                            type="text"
+                            id="userLogin"
+                            name="login"
+                            required
+                            class="form-input"
+                            placeholder="ivan.petrov"
+                            maxlength="100"
+                            autocomplete="username"
+                        >
+                    </div>
+                    <small class="form-hint">Уникальное имя для входа в систему (латиница, цифры, точки, подчёркивания)</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="userEmail" class="form-label">
+                        <span class="label-icon">📧</span>
+                        Email
+                    </label>
+                    <div class="input-wrapper">
+                        <input
+                            type="email"
+                            id="userEmail"
+                            name="email"
+                            class="form-input"
+                            placeholder="ivan.petrov@company.com"
+                            maxlength="100"
+                        >
+                    </div>
+                    <small class="form-hint">Для уведомлений и восстановления доступа (необязательно)</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="userPassword" class="form-label">
+                        <span class="label-icon">🔒</span>
+                        Пароль
+                    </label>
+                    <div class="input-wrapper password-wrapper">
+                        <input
+                            type="password"
+                            id="userPassword"
+                            name="password"
+                            class="form-input"
+                            placeholder="Минимум 8 символов"
+                            minlength="8"
+                            maxlength="255"
+                            autocomplete="new-password"
+                        >
+                        <button type="button" class="toggle-password" onclick="togglePassword('userPassword')">
+                            👁️
+                        </button>
+                    </div>
+                    <small class="form-hint" id="passwordHint">
+                        При создании — обязательное поле. При редактировании — оставьте пустым, чтобы не менять пароль.
+                    </small>
+                </div>
+
+                <div class="form-group">
+                    <label for="userRole" class="form-label">
+                        <span class="label-icon">👥</span>
+                        Роль пользователя
+                    </label>
+                    <div class="input-wrapper">
+                        <select
+                            id="userRole"
+                            name="role_id"
+                            required
+                            class="form-input"
+                        >
+                            <option value="">Выберите роль</option>
+                            {% for role in roles %}
+                            <option value="{{ role.id }}">{{ role.name }} — {{ role.description or 'Без описания' }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <small class="form-hint">Определяет права доступа в системе</small>
+                </div>
+
+                <div class="form-group checkbox-group">
+                    <label class="checkbox-label">
+                        <input
+                            type="checkbox"
+                            id="userActive"
+                            name="is_active"
+                            checked
+                        >
+                        <span class="checkbox-custom"></span>
+                        <span class="checkbox-text">Пользователь активен</span>
+                    </label>
+                    <small class="form-hint">Неактивные пользователи не могут входить в систему</small>
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="btn-secondary" onclick="closeUserForm()">Отмена</button>
+                    <button type="submit" class="btn-submit" id="formSubmitBtn">
+                        <span class="btn-text" id="formSubmitText">Добавить пользователя</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Открыть форму добавления
+function openAddUserForm() {
+    document.getElementById('formTitle').textContent = '➕ Добавить пользователя';
+    document.getElementById('formSubmitText').textContent = 'Добавить пользователя';
+    document.getElementById('userForm').action = '/users';
+    document.getElementById('userId').value = '';
+    document.getElementById('userLogin').value = '';
+    document.getElementById('userEmail').value = '';
+    document.getElementById('userPassword').value = '';
+    document.getElementById('userRole').value = '';
+    document.getElementById('userActive').checked = true;
+    document.getElementById('passwordHint').textContent = 'Обязательное поле при создании пользователя';
+    document.getElementById('userFormModal').classList.remove('hidden');
+}
+
+// Открыть форму редактирования
+function editUser(id, login, email, roleId, isActive) {
+    document.getElementById('formTitle').textContent = '✏️ Редактировать пользователя';
+    document.getElementById('formSubmitText').textContent = 'Сохранить изменения';
+    document.getElementById('userForm').action = `/users/${id}`;
+    document.getElementById('userId').value = id;
+    document.getElementById('userLogin').value = login.trim();
+    document.getElementById('userEmail').value = email && email !== 'null' ? email.trim() : '';
+    document.getElementById('userPassword').value = ''; // Очищаем поле пароля при редактировании
+    document.getElementById('userRole').value = roleId;
+    document.getElementById('userActive').checked = isActive;
+    document.getElementById('passwordHint').textContent = 'Оставьте пустым, чтобы не менять пароль';
+    document.getElementById('userFormModal').classList.remove('hidden');
+    document.getElementById('userLogin').focus();
+}
+
+// Закрыть форму
+function closeUserForm() {
+    document.getElementById('userFormModal').classList.add('hidden');
+    resetFormButton();
+}
+
+// Деактивировать пользователя
+function deleteUser(id, login) {
+    if (confirm(`Вы уверены, что хотите деактивировать пользователя "${login}"?\n\n⚠️ Пользователь не сможет входить в систему, но его данные сохранятся.`)) {
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = `/users/${id}/deactivate`;
+        document.body.appendChild(form);
+        form.submit();
+    }
+}
+
+// Активировать пользователя
+function restoreUser(id, login) {
+    if (confirm(`Вы уверены, что хотите активировать пользователя "${login}"?\n\nПользователь снова сможет входить в систему.`)) {
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = `/users/${id}/activate`;
+        document.body.appendChild(form);
+        form.submit();
+    }
+}
+
+// Показать/скрыть пароль
+function togglePassword(inputId) {
+    const input = document.getElementById(inputId);
+    const button = event.currentTarget;
+
+    if (input.type === 'password') {
+        input.type = 'text';
+        button.innerHTML = '🙈';
+    } else {
+        input.type = 'password';
+        button.innerHTML = '👁️';
+    }
+}
+
+// Фильтрация таблицы
+function filterUsers() {
+    const roleFilter = document.getElementById('roleFilter').value;
+    const statusFilter = document.getElementById('statusFilter').value;
+    const rows = document.querySelectorAll('#usersTableBody tr');
+
+    rows.forEach(row => {
+        const rowRole = row.dataset.role;
+        const rowStatus = row.dataset.status;
+
+        const roleMatch = !roleFilter || rowRole === roleFilter;
+        const statusMatch = !statusFilter || rowStatus === statusFilter;
+
+        row.style.display = (roleMatch && statusMatch) ? '' : 'none';
+    });
+}
+
+// Сброс кнопки формы
+function resetFormButton() {
+    const submitBtn = document.getElementById('formSubmitBtn');
+    submitBtn.disabled = false;
+    submitBtn.innerHTML = '<span class="btn-text" id="formSubmitText">Добавить пользователя</span>';
+}
+
+// Инициализация после загрузки DOM
+document.addEventListener('DOMContentLoaded', function() {
+    // Кнопка добавления пользователя
+    const addBtn = document.getElementById('addUserBtn');
+    if (addBtn) {
+        addBtn.addEventListener('click', openAddUserForm);
+    }
+
+    // Фильтры
+    const roleFilter = document.getElementById('roleFilter');
+    const statusFilter = document.getElementById('statusFilter');
+
+    if (roleFilter) roleFilter.addEventListener('change', filterUsers);
+    if (statusFilter) statusFilter.addEventListener('change', filterUsers);
+
+    // Закрытие модального окна при клике вне его
+    const modal = document.getElementById('userFormModal');
+    if (modal) {
+        modal.addEventListener('click', function(event) {
+            if (event.target === modal) {
+                closeUserForm();
+            }
+        });
+    }
+
+    // Валидация формы
+    const form = document.getElementById('userForm');
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            const login = document.getElementById('userLogin').value.trim();
+            const password = document.getElementById('userPassword').value;
+            const roleId = document.getElementById('userRole').value;
+            const isEditMode = document.getElementById('userId').value !== '';
+
+            // Валидация логина (только латиница, цифры, точки, подчёркивания)
+            if (login.length < 3) {
+                e.preventDefault();
+                alert('Логин должен содержать минимум 3 символа');
+                document.getElementById('userLogin').focus();
+                return false;
+            }
+
+            if (!/^[a-zA-Z0-9._]+$/.test(login)) {
+                e.preventDefault();
+                alert('Логин может содержать только латинские буквы, цифры, точки и подчёркивания');
+                document.getElementById('userLogin').focus();
+                return false;
+            }
+
+            // Валидация пароля (обязателен только при создании)
+            if (!isEditMode && password.length < 8) {
+                e.preventDefault();
+                alert('Пароль должен содержать минимум 8 символов');
+                document.getElementById('userPassword').focus();
+                return false;
+            }
+
+            // Валидация роли
+            if (!roleId) {
+                e.preventDefault();
+                alert('Пожалуйста, выберите роль для пользователя');
+                document.getElementById('userRole').focus();
+                return false;
+            }
+
+            // Показать состояние загрузки
+            const submitBtn = document.getElementById('formSubmitBtn');
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<span class="btn-text">Сохранение...</span><span class="btn-spinner"></span>';
+        });
+    }
+
+    // Обработка нажатия клавиши Escape
+    document.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape') {
+            closeUserForm();
+        }
+    });
+});
+</script>
+{% endblock %}

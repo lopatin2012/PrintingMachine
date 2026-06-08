@@ -1,0 +1,483 @@
+<!-- templates/workshop_users.html -->
+
+{% extends "base.html" %}
+
+{% block title %}Доступ пользователей к цехам{% endblock %}
+
+{% block css %}
+<link rel="stylesheet" href="/static/css/workshop_users.css">
+{% endblock %}
+
+{% block header_title %}Доступ пользователей к цехам{% endblock %}
+
+{% block subtitle %}
+<div class="subtitle">Управление привязкой пользователей к цехам и линиям</div>
+{% endblock %}
+
+{% block back_link %}
+<a class="link-button" href="/">← На главную</a>
+{% endblock %}
+
+{% block content %}
+<div class="workshop-users-container">
+    <!-- Меню управления -->
+    <div class="page-header">
+        <h2>👥 Доступ пользователей к цехам</h2>
+        {% if user and user.role and user.role.is_admin %}
+        <button id="addAccessBtn" class="action-button primary">
+            <span class="button-icon">➕</span>
+            <span class="button-text">Добавить доступ</span>
+        </button>
+        {% endif %}
+    </div>
+
+    <!-- Фильтры -->
+    <div class="filter-section">
+        <div class="filter-group">
+            <label for="userFilter" class="filter-label">Пользователь:</label>
+            <select id="userFilter" class="filter-select">
+                <option value="">Все пользователи</option>
+                {% for user_item in users %}
+                <option value="{{ user_item.id }}">{{ user_item.login }} ({{ user_item.role.name }})</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="filter-group">
+            <label for="workshopFilter" class="filter-label">Цех:</label>
+            <select id="workshopFilter" class="filter-select">
+                <option value="">Все цеха</option>
+                {% for workshop in workshops %}
+                <option value="{{ workshop.id }}">{{ workshop.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="filter-group">
+            <label for="statusFilter" class="filter-label">Статус:</label>
+            <select id="statusFilter" class="filter-select">
+                <option value="">Все</option>
+                <option value="active">Активные</option>
+                <option value="inactive">Неактивные</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- Уведомления -->
+    {% if success %}
+    <div class="alert success">
+        <span>{{ success }}</span>
+    </div>
+    {% endif %}
+
+    {% if error %}
+    <div class="alert error">
+        <span>{{ error }}</span>
+    </div>
+    {% endif %}
+
+    <!-- Таблица связей -->
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>№</th>
+                    <th>Пользователь</th>
+                    <th>Цех</th>
+                    <th>Линия</th>
+                    <th>Роль в цеху</th>
+                    <th>Статус</th>
+                    <th>Дата добавления</th>
+                    {% if user and user.role and user.role.is_admin %}
+                    <th>Действия</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody id="workshopUsersTableBody">
+                {% if workshop_users %}
+                {% for wu in workshop_users %}
+                <tr data-user-id="{{ wu.user_id }}"
+                    data-workshop-id="{{ wu.workshop_id }}"
+                    data-status="{{ 'active' if wu.is_active else 'inactive' }}">
+                    <td>{{ loop.index }}</td>
+                    <td>
+                        <strong>{{ wu.user.login }}</strong>
+                        <div class="user-role-badge">{{ wu.user.role.name }}</div>
+                    </td>
+                    <td>
+                        <span class="workshop-badge">{{ wu.workshop.name }}</span>
+                    </td>
+                    <td>
+                        {% if wu.line %}
+                        <span class="line-badge">{{ wu.line.name }}</span>
+                        {% else %}
+                        <span class="line-badge all">Все линии</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <span class="role-in-workshop {{ wu.role_in_workshop }}">
+                            {{ wu.role_in_workshop|capitalize }}
+                        </span>
+                    </td>
+                    <td>
+                        {% if wu.is_active %}
+                        <span class="status-badge active">Активен</span>
+                        {% else %}
+                        <span class="status-badge inactive">Неактивен</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ wu.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+                    {% if user and user.role and user.role.is_admin %}
+                    <td class="actions-cell">
+                        <button class="table-btn edit-btn"
+                                onclick='editWorkshopUser({{ wu.id|string|tojson|safe }}, {{ wu.user_id|string|tojson|safe }}, {{ wu.workshop_id|string|tojson|safe }}, {{ wu.line_id|string|tojson|safe if wu.line_id else "null"|tojson|safe }}, {{ wu.role_in_workshop|tojson|safe }}, {{ wu.is_active|tojson }}, {{ wu.comment|tojson|safe if wu.comment else "null"|tojson|safe }})'>
+                            ✏️ Редактировать
+                        </button>
+                        <button class="table-btn toggle-btn {% if wu.is_active %}warning{% else %}success{% endif %}"
+                                onclick='toggleWorkshopUserStatus({{ wu.id|string|tojson|safe }}, {{ wu.user.login|tojson|safe }}, {{ wu.is_active|tojson }})'>
+                            {% if wu.is_active %}⏸️ Отключить{% else %}▶️ Включить{% endif %}
+                        </button>
+                        <button class="table-btn delete-btn"
+                                onclick='deleteWorkshopUser({{ wu.id|string|tojson|safe }}, {{ wu.user.login|tojson|safe }}, {{ wu.workshop.name|tojson|safe }})'>
+                            🗑️ Удалить
+                        </button>
+                    </td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+                {% else %}
+                <tr>
+                    <td colspan="8" class="empty-row">👥 Нет привязок пользователей к цехам</td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Форма добавления/редактирования -->
+    <div id="workshopUserFormModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="formTitle">➕ Добавить доступ к цеху</h3>
+                <button class="close-btn" onclick="closeWorkshopUserForm()">&times;</button>
+            </div>
+
+            <form id="workshopUserForm" method="post" action="/workshop-users">
+                <input type="hidden" id="workshopUserId" name="id">
+
+                <div class="form-group">
+                    <label for="workshopUser" class="form-label">
+                        <span class="label-icon">👤</span>
+                        Пользователь
+                    </label>
+                    <div class="input-wrapper">
+                        <select id="workshopUser" name="user_id" required class="form-input">
+                            <option value="">Выберите пользователя</option>
+                            {% for user_item in users %}
+                            <option value="{{ user_item.id }}">{{ user_item.login }} ({{ user_item.role.name }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <small class="form-hint">Пользователь, которому предоставляется доступ</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="workshopWorkshop" class="form-label">
+                        <span class="label-icon">🏭</span>
+                        Цех
+                    </label>
+                    <div class="input-wrapper">
+                        <select id="workshopWorkshop" name="workshop_id" required class="form-input">
+                            <option value="">Выберите цех</option>
+                            {% for workshop in workshops %}
+                            <option value="{{ workshop.id }}">{{ workshop.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <small class="form-hint">Цех, к которому предоставляется доступ</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="workshopLine" class="form-label">
+                        <span class="label-icon">🔧</span>
+                        Линия (опционально)
+                    </label>
+                    <div class="input-wrapper">
+                        <select id="workshopLine" name="line_id" class="form-input">
+                            <option value="">Все линии цеха</option>
+                            <!-- Заполняется динамически при выборе цеха -->
+                        </select>
+                    </div>
+                    <small class="form-hint">Если не выбрана — доступ ко всем линиям цеха</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="workshopRole" class="form-label">
+                        <span class="label-icon">🔑</span>
+                        Роль в цеху
+                    </label>
+                    <div class="input-wrapper">
+                        <select id="workshopRole" name="role_in_workshop" required class="form-input">
+                            <option value="operator">Оператор</option>
+                            <option value="master" selected>Мастер</option>
+                            <option value="supervisor">Супервайзер</option>
+                        </select>
+                    </div>
+                    <small class="form-hint">
+                        <strong>Оператор</strong> — базовый доступ к печати,
+                        <strong>Мастер</strong> — управление линией,
+                        <strong>Супервайзер</strong> — контроль качества
+                    </small>
+                </div>
+
+                <div class="form-group">
+                    <label for="workshopComment" class="form-label">
+                        <span class="label-icon">📝</span>
+                        Комментарий
+                    </label>
+                    <div class="input-wrapper">
+                        <textarea id="workshopComment" name="comment" class="form-input" rows="3" maxlength="255"></textarea>
+                    </div>
+                    <small class="form-hint">Необязательное поле для заметок (кто добавил, причина и т.д.)</small>
+                </div>
+
+                <div class="form-group checkbox-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="workshopActive" name="is_active" checked>
+                        <span class="checkbox-custom"></span>
+                        <span class="checkbox-text">Доступ активен</span>
+                    </label>
+                    <small class="form-hint">Снимите галочку, чтобы временно отключить доступ без удаления</small>
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="btn-secondary" onclick="closeWorkshopUserForm()">Отмена</button>
+                    <button type="submit" class="btn-submit" id="formSubmitBtn">
+                        <span class="btn-text" id="formSubmitText">Добавить доступ</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Глобальные переменные для динамической загрузки линий
+let workshopsLines = {};
+
+// Инициализация после загрузки DOM
+document.addEventListener('DOMContentLoaded', function() {
+    // Собираем линии по цехам для динамической загрузки
+    {% for workshop in workshops %}
+    workshopsLines["{{ workshop.id }}"] = [
+        {% for line in workshop.lines %}
+        { id: "{{ line.id }}", name: "{{ line.name|e }}" },
+        {% endfor %}
+    ];
+    {% endfor %}
+
+    // Кнопка добавления доступа
+    const addBtn = document.getElementById('addAccessBtn');
+    if (addBtn) {
+        addBtn.addEventListener('click', openAddWorkshopUserForm);
+    }
+
+    // Фильтры
+    setupFilters();
+
+    // Обработчик выбора цеха для динамической загрузки линий
+    const workshopSelect = document.getElementById('workshopWorkshop');
+    if (workshopSelect) {
+        workshopSelect.addEventListener('change', loadLinesForWorkshop);
+    }
+
+    // Закрытие модальных окон
+    setupModalCloseHandlers();
+
+    // Валидация формы
+    setupFormValidation();
+});
+
+// Открыть форму добавления
+function openAddWorkshopUserForm() {
+    document.getElementById('formTitle').textContent = '➕ Добавить доступ к цеху';
+    document.getElementById('formSubmitText').textContent = 'Добавить доступ';
+    document.getElementById('workshopUserForm').action = '/workshop-users';
+    document.getElementById('workshopUserId').value = '';
+    document.getElementById('workshopUser').value = '';
+    document.getElementById('workshopWorkshop').value = '';
+    document.getElementById('workshopLine').innerHTML = '<option value="">Все линии цеха</option>';
+    document.getElementById('workshopRole').value = 'master';
+    document.getElementById('workshopComment').value = '';
+    document.getElementById('workshopActive').checked = true;
+    document.getElementById('workshopUserFormModal').classList.remove('hidden');
+}
+
+// Открыть форму редактирования
+function editWorkshopUser(id, userId, workshopId, lineId, roleInWorkshop, isActive, comment) {
+    document.getElementById('formTitle').textContent = '✏️ Редактировать доступ';
+    document.getElementById('formSubmitText').textContent = 'Сохранить изменения';
+    document.getElementById('workshopUserForm').action = `/workshop-users/${id}`;
+    document.getElementById('workshopUserId').value = id;
+    document.getElementById('workshopUser').value = userId;
+    document.getElementById('workshopWorkshop').value = workshopId;
+    document.getElementById('workshopRole').value = roleInWorkshop;
+    document.getElementById('workshopActive').checked = isActive;
+    document.getElementById('workshopComment').value = comment && comment !== 'null' ? comment : '';
+    document.getElementById('workshopUserFormModal').classList.remove('hidden');
+
+    // Загрузка линий для выбранного цеха
+    loadLinesForWorkshop();
+    document.getElementById('workshopLine').value = lineId || '';
+}
+
+// Загрузка линий при выборе цеха
+function loadLinesForWorkshop() {
+    const workshopId = document.getElementById('workshopWorkshop').value;
+    const lineSelect = document.getElementById('workshopLine');
+
+    // Очищаем текущие опции
+    lineSelect.innerHTML = '<option value="">Все линии цеха</option>';
+
+    // Загружаем линии для выбранного цеха
+    if (workshopId && workshopsLines[workshopId]) {
+        workshopsLines[workshopId].forEach(line => {
+            const option = document.createElement('option');
+            option.value = line.id;
+            option.textContent = line.name;
+            lineSelect.appendChild(option);
+        });
+    }
+}
+
+// Закрыть форму
+function closeWorkshopUserForm() {
+    document.getElementById('workshopUserFormModal').classList.add('hidden');
+    resetFormButton();
+}
+
+// Переключить статус
+function toggleWorkshopUserStatus(id, userName, isActive) {
+    const action = isActive ? 'отключить' : 'включить';
+    const confirmMsg = `Вы уверены, что хотите ${action} доступ пользователя "${userName}" к цеху?`;
+
+    if (confirm(confirmMsg)) {
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = `/workshop-users/${id}/${isActive ? 'deactivate' : 'activate'}`;
+        document.body.appendChild(form);
+        form.submit();
+    }
+}
+
+// Удалить привязку
+function deleteWorkshopUser(id, userName, workshopName) {
+    if (confirm(`Вы уверены, что хотите удалить доступ пользователя "${userName}" к цеху "${workshopName}"?\n\n⚠️ Это действие нельзя отменить!`)) {
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = `/workshop-users/${id}/delete`;
+        document.body.appendChild(form);
+        form.submit();
+    }
+}
+
+// Фильтрация таблицы
+function setupFilters() {
+    const userFilter = document.getElementById('userFilter');
+    const workshopFilter = document.getElementById('workshopFilter');
+    const statusFilter = document.getElementById('statusFilter');
+
+    if (userFilter) userFilter.addEventListener('change', filterWorkshopUsers);
+    if (workshopFilter) workshopFilter.addEventListener('change', filterWorkshopUsers);
+    if (statusFilter) statusFilter.addEventListener('change', filterWorkshopUsers);
+}
+
+function filterWorkshopUsers() {
+    const userId = document.getElementById('userFilter').value;
+    const workshopId = document.getElementById('workshopFilter').value;
+    const status = document.getElementById('statusFilter').value;
+
+    const rows = document.querySelectorAll('#workshopUsersTableBody tr');
+
+    rows.forEach(row => {
+        const rowUserId = row.dataset.userId;
+        const rowWorkshopId = row.dataset.workshopId;
+        const rowStatus = row.dataset.status;
+
+        const userMatch = !userId || rowUserId === userId;
+        const workshopMatch = !workshopId || rowWorkshopId === workshopId;
+        const statusMatch = !status || rowStatus === status;
+
+        row.style.display = (userMatch && workshopMatch && statusMatch) ? '' : 'none';
+    });
+}
+
+// Закрытие модальных окон
+function setupModalCloseHandlers() {
+    const modal = document.getElementById('workshopUserFormModal');
+    if (modal) {
+        modal.addEventListener('click', function(event) {
+            if (event.target === modal) {
+                closeWorkshopUserForm();
+            }
+        });
+    }
+
+    document.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape') {
+            closeWorkshopUserForm();
+        }
+    });
+}
+
+// Валидация формы
+function setupFormValidation() {
+    const form = document.getElementById('workshopUserForm');
+    if (!form) return;
+
+    form.addEventListener('submit', function(e) {
+        const userId = document.getElementById('workshopUser').value;
+        const workshopId = document.getElementById('workshopWorkshop').value;
+        const role = document.getElementById('workshopRole').value;
+
+        // Валидация обязательных полей
+        if (!userId) {
+            e.preventDefault();
+            alert('Пожалуйста, выберите пользователя');
+            document.getElementById('workshopUser').focus();
+            return false;
+        }
+
+        if (!workshopId) {
+            e.preventDefault();
+            alert('Пожалуйста, выберите цех');
+            document.getElementById('workshopWorkshop').focus();
+            return false;
+        }
+
+        if (!role) {
+            e.preventDefault();
+            alert('Пожалуйста, выберите роль в цеху');
+            document.getElementById('workshopRole').focus();
+            return false;
+        }
+
+        // Проверка уникальности (пользователь + цех)
+
+        // Показать состояние загрузки
+        const submitBtn = document.getElementById('formSubmitBtn');
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span class="btn-text">Сохранение...</span><span class="btn-spinner"></span>';
+    });
+}
+
+// Сброс кнопки формы
+function resetFormButton() {
+    const submitBtn = document.getElementById('formSubmitBtn');
+    if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<span class="btn-text" id="formSubmitText">Добавить доступ</span>';
+    }
+}
+</script>
+{% endblock %}

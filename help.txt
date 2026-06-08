@@ -1,0 +1,2 @@
+alembic revision --autogenerate -m "" - Создать миграцию.
+alembic upgrade head - Применить миграцию.

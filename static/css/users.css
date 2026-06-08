@@ -1,0 +1,139 @@
+/* ============================================
+   СТРАНИЦА УПРАВЛЕНИЯ ПОЛЬЗОВАТЕЛЯМИ
+   ============================================ */
+
+.users-container {
+    background: white;
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: var(--shadow);
+    margin-bottom: 24px;
+}
+
+/* Бейджи пользователей */
+.current-user-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 10px;
+    font-size: 11px;
+    background: rgba(74, 85, 162, 0.15);
+    color: var(--primary);
+    margin-left: 6px;
+    vertical-align: middle;
+}
+
+.user-login {
+    display: flex;
+    align-items: center;
+}
+
+/* Статус пользователя */
+.status-badge {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.status-badge.active {
+    background: rgba(40, 167, 69, 0.15);
+    color: #2e7d32;
+}
+
+.status-badge.inactive {
+    background: rgba(108, 117, 125, 0.15);
+    color: #495057;
+}
+
+/* Кнопки действий */
+.restore-btn {
+    background: linear-gradient(135deg, #75d8a5 0%, #85e2b5 100%);
+    color: white;
+}
+
+.restore-btn:hover {
+    background: linear-gradient(135deg, #65c295 0%, #75d8a5 100%);
+}
+
+/* Поле пароля */
+.password-wrapper {
+    position: relative;
+}
+
+.toggle-password {
+    position: absolute;
+    right: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: #888;
+    cursor: pointer;
+    font-size: 18px;
+    padding: 4px;
+    transition: color 0.2s;
+}
+
+.toggle-password:hover {
+    color: var(--primary);
+}
+
+/* Адаптивность */
+@media (max-width: 900px) {
+    .filter-section {
+        flex-direction: column;
+    }
+
+    .filter-group {
+        min-width: 100%;
+    }
+}
+
+@media (max-width: 768px) {
+    .data-table {
+        font-size: 13px;
+    }
+
+    .data-table th,
+    .data-table td {
+        padding: 10px 8px;
+    }
+
+    .modal-content {
+        padding: 24px;
+        margin: 16px;
+    }
+}
+
+@media (max-width: 480px) {
+    .users-container {
+        padding: 16px;
+    }
+
+    .data-table {
+        font-size: 12px;
+    }
+
+    .page-header h2 {
+        font-size: 20px;
+    }
+
+    .actions-cell {
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .table-btn {
+        width: 100%;
+        justify-content: center;
+        font-size: 12px;
+        padding: 6px 12px;
+    }
+
+    .checkbox-label {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+    }
+}

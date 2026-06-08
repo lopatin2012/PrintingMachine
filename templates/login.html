@@ -1,0 +1,112 @@
+<!-- templates/login.html -->
+{% extends "base.html" %}
+
+{% block title %}Вход в систему{% endblock %}
+
+{% block header_title %}Вход в систему{% endblock %}
+
+{% block subtitle %}
+<div class="subtitle">Авторизируйтесь для доступа к функционалу печати</div>
+{% endblock %}
+
+{% block back_link %}
+<a class="link-button" href="/"><- На главную</a>
+{% endblock %}
+
+{% block content %}
+<div class="auth-container">
+    <div class="auth-card">
+        <div class="auth-header">
+            <div class="auth-icon">🔑</div>
+            <h2>Вход в систему</h2>
+            <p class="auth-subtitle">Введите ваши учётные данные для входа</p>
+        </div>
+
+        {% if error %}
+        <div class="alert error">
+            <span>{{ error }}</span>
+        </div>
+        {% endif %}
+
+        <form method="post" action="/user_login" class="auth-form" id="loginForm">
+            <div class="form-group">
+                <label for="login" class="form-label">
+                    <span class="label-icon">📧</span>
+                    Логин
+                </label>
+                <div class="input-wrapper">
+                    <input
+                            type="text"
+                            id="login"
+                            name="login"
+                            required
+                            class="form-input"
+                            placeholder="Введите логин"
+                            value="{{ login or '' }}"
+                    >
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="password" class="form-label">
+                    <span class="label-icon">🔒</span>
+                    Пароль
+                </label>
+                <div class="input-wrapper">
+                    <input
+                            type="password"
+                            id="password"
+                            name="password"
+                            required
+                            class="form-input"
+                            placeholder="Введите пароль"
+                            autocomplete="current-password"
+                    >
+                    <button type="button" class="toggle-password" onclick="togglePassword('password')">
+                        👁️
+                    </button>
+                </div>
+                <small class="form-hint">
+                    Забыли пароль? Обратитесь к администратору системы.
+                </small>
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" class="btn-submit" id="submitBtn">
+                    <span class="btn-text">Войти в систему</span>
+                    <span class="btn-icon">-></span>
+                </button>
+            </div>
+
+            <div class="auth-footer">
+                <p>Нет аккаунта? Обратитесь к администратору системы.</p>
+            </div>
+
+            <div class="auth-info">
+                <div class="info-card">
+                    <div class="info-icon">ℹ️</div>
+                    <h3>Информация о входе</h3>
+                    <ul class="role-list">
+                        <li>
+                            <strong>📧 Логин</strong>
+                            <p>Используйте вашу корпоративную почту или логин, и указанный при регистрации</p>
+                        </li>
+                        <li>
+                            <strong>🔒 Пароль</strong>
+                            <p>Пароль чувствителен к регистру. Минимум 8 символов</p>
+                        </li>
+                        <li>
+                            <strong>🛡️ Безопасность</strong>
+                            <p>Сессия автоматически завершится через сутки неактивности</p>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/password.js"></script>
+{% endblock %}

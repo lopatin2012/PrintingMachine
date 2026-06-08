@@ -1,0 +1,106 @@
+<!-- templates/home.html -->
+{% extends "base.html" %}
+
+{% block title %}Производственная печать{% endblock %}
+
+{% block content %}
+<div class="dashboard">
+    <!-- Админ панель -->
+    {% if user and user.role.is_admin %}
+    <div class="role-panel admin admin-panel">
+        <h2>
+            <span class="role-icon">👑</span> Администратор
+        </h2>
+        <span class="role-badge admin margin-left-20"> Полный доступ</span>
+    </div>
+    <div class="button-grid">
+        <a href="/workshops" class="action-button primary">
+            <span class="button-icon">🏭</span>
+            <span class="button-text">Цеха</span>
+        </a>
+        <a href="/lines" class="action-button primary">
+            <span class="button-icon">🚃</span>
+            <span class="button-text">Линии</span>
+        </a>
+        <a href="/printers" class="action-button primary">
+            <span class="button-icon">🖨️</span>
+            <span class="button-text">Принтеры</span>
+        </a>
+        <a href="/roles" class="action-button primary">
+            <span class="button-icon">👥</span>
+            <span class="button-text">Роли</span>
+        </a>
+        <a href="/users" class="action-button primary">
+            <span class="button-icon">👤</span>
+            <span class="button-text">Пользователи</span>
+        </a>
+        <a href="/workshop-users" class="action-button primary">
+            <span class="button-icon">👷‍♂️</span>
+            <span class="button-text">Пользователи цеха</span>
+        </a>
+        <a href="/products" class="action-button primary">
+            <span class="button-icon">📦</span>
+            <span class="button-text">Продукты</span>
+        </a>
+        <a href="/templates" class="action-button primary">
+            <span class="button-icon">📝</span>
+            <span class="button-text">Шаблоны</span>
+        </a>
+        <a href="/printing" class="action-button success">
+            <span class="button-icon">🖨️</span>
+            <span class="button-text">Печать этикеток</span>
+        </a>
+    </div>
+    {% endif %}
+
+    <!-- Редактор панель -->
+    {% if user and (user.role.is_admin or user.role.is_editor) %}
+    <div class="role-panel editor-panel">
+        <div class="panel-header">
+            <h2><span class="role-icon">✏️</span> Редактор</h2>
+            <span class="role-badge editor margin-left-20">Редактирование</span>
+        </div>
+        <div class="button-grid">
+            <a href="/templates" class="action-button primary">
+                <span class="button-icon">📝</span>
+                <span class="button-text">Шаблоны</span>
+            </a>
+            <a href="/printing" class="action-button success">
+                <span class="button-icon">🖨️</span>
+                <span class="button-text">Печать этикеток</span>
+            </a>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Пользователь панель -->
+    {% if user %}
+    <div class="role-panel user-panel">
+        <div class="panel-header">
+            <h2><span class="role-icon">👤</span> Пользователь</h2>
+            <span class="role-badge user">Просмотр и печать</span>
+        </div>
+        <div class="button-grid">
+            <a href="/printing" class="action-button success">
+                <span class="button-icon">🖨️</span>
+                <span class="button-text">Печать этикеток</span>
+            </a>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% if not user %}
+<div class="guest-message">
+    <div class="guest-panel">
+        <h2>👋 Добро пожаловать!</h2>
+        <p>Пожалуйста, войдите в систему для доступа к функционалу печати.</p>
+        <div class="guest-buttons">
+            <a href="/user_login" class="action-button success large">
+                <span class="button-icon">🔑</span>
+                <span class="button-text">Войти</span>
+            </a>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

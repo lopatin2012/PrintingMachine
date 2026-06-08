@@ -1,0 +1,1383 @@
+<!-- templates/code_templates.html -->
+{% extends "base.html" %}
+
+{% block title %}Шаблоны печати{% endblock %}
+
+{% block css %}
+<link rel="stylesheet" href="/static/css/templates.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/github.min.css">
+{% endblock %}
+
+{% block header_title %}Шаблоны печати{% endblock %}
+
+{% block subtitle %}
+<div class="subtitle">Управление шаблонами этикеток для промышленных принтеров</div>
+{% endblock %}
+
+{% block back_link %}
+<a class="link-button" href="/">← На главную</a>
+{% endblock %}
+
+{% block content %}
+<div
+        data-prefill-product-id="{{ prefill_product_id or '' }}"
+        data-prefill-printer-id=""
+        class="templates-container">
+
+    <!-- Заголовок страницы -->
+    <div class="page-header">
+        <h2>📄 Список шаблонов печати</h2>
+        {% if user and user.role and (user.role.is_admin or user.role.is_editor) %}
+        <button id="addTemplateBtn" class="action-button primary">
+            <span class="button-icon">➕</span>
+            <span class="button-text">Добавить шаблон</span>
+        </button>
+        {% endif %}
+    </div>
+
+    <!-- Поиск по шаблонам -->
+    <div class="filter-group filter-search">
+        <label for="templateSearch" class="filter-label">🔍 Поиск:</label>
+        <div class="search-input-wrapper">
+            <input type="text"
+                   id="templateSearch"
+                   class="filter-input"
+                   placeholder="По названию, коду или продукту..."
+                   autocomplete="off">
+            <button type="button" class="search-clear-btn" id="searchClearBtn" style="display:none;">&times;</button>
+        </div>
+    </div>
+
+    <!-- Фильтры -->
+    <div class="filter-section">
+
+        <div class="filter-group">
+            <label for="productFilter" class="filter-label">Продукт:</label>
+            <select id="productFilter" class="filter-select">
+                <option value="">Все продукты</option>
+                {% for product in products %}
+                <option
+                        value="{{ product.id }}"
+                        {% if product.id|string == request.query_params.get('product_id')|string %}selected{% endif %}
+                >{{ product.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="filter-group">
+            <label for="printerFilter" class="filter-label">Принтер:</label>
+            <select id="printerFilter" class="filter-select">
+                <option value="">Все принтеры</option>
+                {% for printer in printers %}
+                <option
+                        value="{{ printer.id }}">{{ printer.name }} ({{ printer.ip_address }})</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="filter-group">
+            <label for="statusFilter" class="filter-label">Статус:</label>
+            <select id="statusFilter" class="filter-select">
+                <option value="">Все</option>
+                <option value="active">Активные</option>
+                <option value="inactive">Неактивные</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- Уведомления -->
+    {% if success %}
+    <div class="alert success"><span>{{ success }}</span></div>
+    {% endif %}
+    {% if error %}
+    <div class="alert error"><span>{{ error }}</span></div>
+    {% endif %}
+
+    <!-- Таблица шаблонов -->
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+            <tr>
+                <th>№</th>
+                <th>Наименование</th>
+                <th>Продукт</th>
+                <th>Принтер</th>
+                <th>Статус</th>
+                <th>Дата создания</th>
+                {% if user and user.role and (user.role.is_admin or user.role.is_editor) %}
+                <th>Действия</th>
+                {% endif %}
+            </tr>
+            </thead>
+            <tbody id="templatesTableBody">
+            {% if templates %}
+            {% for template in templates %}
+            <tr
+                    data-id="{{ template.id }}"
+                    data-product-id="{{ template.product_id }}"
+                    data-product-gtin="{{ template.product.gtin if template.product else '' }}"
+                    data-product-code-1c="{{ template.product.current_code_1c if template.product and template.product.current_code_1c else '' }}"
+                    data-printer-id="{{ template.printer_id }}"
+                    data-status="{{ 'active' if template.is_active else 'inactive' }}"
+                    data-print-code="{{ template.print_code|e }}">
+                <td>{{ loop.index }}</td>
+                <td>
+                    <strong class="template-name">{{ template.name }} {{ template.product.gtin }}</strong>
+                    <div class="template-type">
+                        {% if template.print_code and template.print_code.startswith('^XA') %}
+                        <span class="type-badge zpl">ZPL</span>
+                        {% elif template.print_code and template.print_code.startswith('SIZE') %}
+                        <span class="type-badge tspl">TSPL</span>
+                        {% else %}
+                        <span class="type-badge other">Другой</span>
+                        {% endif %}
+                    </div>
+                </td>
+                <td>
+                    {% if template.product %}
+                    <span class="product-badge">{{ template.product.name }} {{ template.product.current_code_1c }}</span>
+                    {% else %}
+                    <span class="product-badge unknown">Без продукта</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if template.printer %}
+                    <span class="printer-badge">{{ template.printer.name }}</span>
+                    {% else %}
+                    <span class="printer-badge unknown">Без принтера</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if template.is_active %}
+                    <span class="status-badge active">Активен</span>
+                    {% else %}
+                    <span class="status-badge inactive">Неактивен</span>
+                    {% endif %}
+                </td>
+                <td>{{ template.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+                {% if user and user.role and (user.role.is_admin or user.role.is_editor) %}
+                <td class="actions-cell">
+                    <div>{{ template.product_gtin }}</div>
+                    <button class="table-btn edit-btn"
+                            data-template-id="{{ template.id }}"
+                            onclick='editTemplateFromRow(this, {{ template.id|string|tojson|safe }}, {{ template.name|tojson|safe }})'>
+                        ✏️ Редактировать
+                    </button>
+                    <button class="table-btn toggle-btn {% if template.is_active %}is-active{% else %}is-not-active{% endif %}"
+                            onclick='toggleTemplateStatus({{ template.id|string|tojson|safe }}, {{ template.name|tojson|safe }}, {{ template.is_active|tojson }})'>
+                        {% if template.is_active %}⏸️ Отключить{% else %}▶️ Включить{% endif %}
+                    </button>
+                    {% if user.role.is_admin %}
+                    <button class="table-btn delete-btn"
+                            onclick='deleteTemplate({{ template.id|string|tojson|safe }}, {{ template.name|tojson|safe }})'>
+                        🗑️ Удалить
+                    </button>
+                    {% endif %}
+                </td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+            {% else %}
+            <tr>
+                <td colspan="7" class="empty-row">📄 Нет шаблонов печати</td>
+            </tr>
+            {% endif %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Форма добавления/редактирования со встроенным предпросмотром -->
+    <div id="templateFormModal" class="modal hidden">
+        <div class="modal-content form-with-preview-modal">
+            <div class="modal-header">
+                <h3 id="formTitle">➕ Добавить шаблон печати</h3>
+                <button class="close-btn" onclick="closeTemplateForm()">&times;</button>
+            </div>
+
+            <div class="form-preview-layout">
+                <!-- Левая часть: Форма -->
+                <div class="form-panel">
+                    <form id="templateForm" method="post" action="/templates">
+                        <input class="hidden" id="templateId" name="id">
+                        <input class="hidden" id="productGtin" name="gtin">
+
+                        <!-- 📋 Скроллируемая область с полями -->
+                        <div class="form-fields-scroll">
+                            <div class="form-group">
+                                <label for="templateName" class="form-label">
+                                    <span class="label-icon">📄</span> Наименование шаблона
+                                </label>
+                                <input type="text" id="templateName" name="name" required class="form-input"
+                                       placeholder="Этикетка для молока 1л (Zebra ZT410)" maxlength="200">
+                            </div>
+
+                            <div class="form-row">
+                                <!-- 🔍 Продукт с поиском -->
+                                <div class="form-group half-width">
+                                    <label class="form-label">
+                                        <span class="label-icon">📦</span> Продукт
+                                    </label>
+
+                                    <!-- Поле поиска -->
+                                    <div class="select-with-search">
+                                        <input type="text"
+                                               class="select-search-input"
+                                               id="productSearchInput"
+                                               placeholder="Поиск по названию, коду 1С или GTIN..."
+                                               autocomplete="off">
+                                        <span class="select-search-icon">🔍</span>
+                                    </div>
+
+                                    <select id="templateProduct" name="product_id" required
+                                            class="form-input searchable-select"
+                                            size="4"
+                                            data-search-target="productSearchInput">
+                                        <option value="">Выберите продукт</option>
+                                        {% for product in products %}
+                                        <option value="{{ product.id }}"
+                                                title="{{ product.name }} | GTIN: {{ product.gtin }} | Код 1С: {{ product.current_code_1c }}"
+                                                data-product-gtin="{{ product.gtin }}"
+                                                data-searchable="{{ product.name|lower }} {{ product.current_code_1c|lower }} {{ product.gtin|lower }}"
+                                                {% if product.id|string == request.query_params.get('product_id')|string %}selected{% endif %}
+                                        >
+                                            {{ product.name }} (GTIN: {{ product.gtin }})
+                                        </option>
+                                        {% endfor %}
+                                    </select>
+                                    <small class="form-hint"></small>
+                                </div>
+
+                                <!-- 🔍 Принтер с поиском -->
+                                <div class="form-group half-width">
+                                    <label class="form-label">
+                                        <span class="label-icon">🖨️</span> Принтер
+                                    </label>
+
+                                    <div class="select-with-search">
+                                        <input type="text"
+                                               class="select-search-input"
+                                               id="printerSearchInput"
+                                               placeholder="Поиск по названию или IP..."
+                                               autocomplete="off">
+                                        <span class="select-search-icon">🔍</span>
+                                    </div>
+
+                                    <select id="templatePrinter" name="printer_id" required
+                                            class="form-input searchable-select"
+                                            size="4"
+                                            data-search-target="printerSearchInput">
+                                        <option value="">Выберите принтер</option>
+                                        {% for printer in printers %}
+                                        <option value="{{ printer.id }}"
+                                                title="{{ printer.name }} | IP: {{ printer.ip_address }}:{{ printer.port_address }}"
+                                                data-searchable="{{ printer.name|lower }} {{ printer.ip_address|lower }}">
+                                            {{ printer.name }} ({{ printer.ip_address }}:{{ printer.port_address }})
+                                        </option>
+                                        {% endfor %}
+                                    </select>
+                                    <small class="form-hint"></small>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="templateCode" class="form-label">
+                                    <span class="label-icon">💻</span> Код шаблона (ZPL)
+                                </label>
+                                <div class="code-editor-wrapper">
+                                    <div class="editor-toolbar">
+                                        <button type="button" class="editor-btn" onclick="formatCode()">Форматировать</button>
+                                        <button type="button" class="editor-btn" onclick="validateCode()">Проверить</button>
+                                        <button type="button" class="editor-btn primary" onclick="previewCodeFromEditor()">👁️ Предпросмотр</button>
+                                        <select id="codeLanguage" class="editor-select" onchange="changeLanguage()">
+                                            <option value="zpl">ZPL (Zebra)</option>
+                                        </select>
+                                    </div>
+                                    <textarea id="templateCode" name="print_code" required class="code-editor"
+                                              placeholder="Введите код шаблона..." rows="10"></textarea>
+                                </div>
+                                <small class="form-hint">
+                                    <a href="#" class="syntax-help" onclick="showSyntaxHelp(event)">Справка по синтаксису</a>
+                                </small>
+                            </div>
+                        </div>
+
+                        <!-- 🔘 Липкая панель кнопок (всегда видна) -->
+                        <div class="form-actions sticky-actions">
+                            <button type="button" class="btn-secondary" onclick="closeTemplateForm()">Отмена</button>
+                            <button type="submit" class="btn-submit" id="formSubmitBtn">
+                                <span class="btn-text" id="formSubmitText">Добавить шаблон</span>
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Правая часть: Предпросмотр -->
+                <div class="preview-panel">
+                    <div class="preview-container">
+                        <div class="preview-image-container">
+                            <!-- Область изображения -->
+                            <div class="preview-content" id="previewContent">
+                                <div class="preview-placeholder">
+                                    <span class="preview-placeholder-icon">👁️</span>
+                                    <p>Нажмите «Предпросмотр» для генерации</p>
+                                    <small>Или выберите шаблон из таблицы</small>
+                                </div>
+                            </div>
+
+                            <!-- Кнопки управления -->
+                            <div class="preview-controls" id="previewControls" style="display: none;">
+                                <button class="btn-secondary" onclick="rotatePreview(-90)">↩️</button>
+                                <button class="btn-secondary" onclick="resetPreview()">↺</button>
+                                <button class="btn-secondary" onclick="rotatePreview(90)">↪️</button>
+                                <button class="btn-submit" onclick="downloadPreview()">💾</button>
+                            </div>
+
+                            <div class="gs1-params-section">
+                                <h5>📦 Данные для предпросмотра</h5>
+                                <div class="gs1-grid">
+                                    <div class="gs1-field">
+                                        <label for="previewMarkingDate">Дата маркировки</label>
+                                        <input type="date" id="previewMarkingDate" class="param-input"
+                                               onchange="renderPreviewWithParams()">
+                                    </div>
+                                    <div class="gs1-field">
+                                        <label for="previewBatch">Партия</label>
+                                        <input type="text" id="previewBatch" class="param-input"
+                                               placeholder="01" maxlength="50"
+                                               onchange="renderPreviewWithParams()">
+                                    </div>
+                                    <div class="gs1-field">
+                                        <label for="previewBoxNumber">Номер коробки</label>
+                                        <input type="number" id="previewBoxNumber" class="param-input"
+                                               placeholder="1" min="1" value="1"
+                                               onchange="renderPreviewWithParams()">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Документация -->
+    <div class="docs-section">
+        <div class="docs-title">📚 Документация по языкам печати</div>
+        <ul class="docs-list">
+            <li>
+                <a href="/static/documents/ZPL_documentation.pdf" target="_blank" class="docs-link">
+                    ZPL (Zebra Programming Language) — официальная документация
+                </a>
+            </li>
+            <li>
+                <a href="/static/documents/TSC_documentation.pdf" target="_blank" class="docs-link">
+                    TSPL (TSC Programming Language) — официальная документация
+                </a>
+            </li>
+            <li>
+                <a href="#" class="docs-link" onclick="showSyntaxHelp(event)">
+                    💡 Справка по синтаксису и примеры кода
+                </a>
+            </li>
+        </ul>
+    </div>
+
+    <!-- Справка по синтаксису -->
+    <div id="syntaxHelpModal" class="modal hidden">
+        <div class="modal-content syntax-modal">
+            <div class="modal-header">
+                <h3>📚 Справка по синтаксису шаблонов</h3>
+                <button class="close-btn" onclick="closeSyntaxHelp()">&times;</button>
+            </div>
+            <div class="syntax-content">
+                <h4>ZPL (Zebra Programming Language)</h4>
+                <pre><code class="language-zpl">^XA                    // Начало этикетки
+^FO50,50              // Позиция (X,Y)
+^A0N,30,30            // Шрифт (стандартный, нормальный, высота 30, ширина 30)
+^FDТекст^FS           // Данные и конец поля
+^XZ                    // Конец этикетки</code></pre>
+                <h4>TSPL (TSC Programming Language)</h4>
+                <pre><code class="language-tspl">SIZE 60 mm, 40 mm      // Размер этикетки
+GAP 2 mm, 0 mm         // Зазор между этикетками
+DIRECTION 0            // Направление печати
+REFERENCE 0,0          // Точка отсчёта
+CLS                    // Очистка буфера
+TEXT 10,10,"1",0,1,1,"Текст"
+PRINT 1,1              // Печать 1 копии</code></pre>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="closeSyntaxHelp()">Закрыть</button>
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/highlight.min.js"></script>
+<script src="/static/js/zephir.min.js"></script>
+<script>
+window.isUserAdmin = {{ 'true' if user and user.role and user.role.is_admin else 'false' }};
+
+document.addEventListener('DOMContentLoaded', function () {
+    const addBtn = document.getElementById('addTemplateBtn');
+    if (addBtn) addBtn.addEventListener('click', openAddTemplateForm);
+
+    setupFilters();
+    setupProductFilterFromUrl();
+    setupCodeEditor();
+    setupModalCloseHandlers();
+    setupFormValidation();
+    setupSelectSearch();
+    setupProductGtinSync();
+    setupTemplateSearch();
+
+    if (typeof hljs !== 'undefined') hljs.highlightAll();
+});
+
+// ─── ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ─────────────────────────────────────────────────
+
+/** Возвращает CSRF-токен из мета-тега или куки */
+function getCSRFToken() {
+    // Из мета-тега (если используется Flask-WTF / Django)
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    if (meta) return meta.getAttribute('content');
+    // Из куки
+    const match = document.cookie.match(/(?:^|; )csrf_token=([^;]*)/);
+    return match ? decodeURIComponent(match[1]) : '';
+}
+
+/** Форматирует дату в YYYY-MM-DD (для input type="date") */
+function formatDateForInput(date) {
+    const d = String(date.getDate()).padStart(2, '0');
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const y = date.getFullYear();
+    return `${y}-${m}-${d}`;
+}
+
+/** Форматирует дату в ДД.ММ.ГГ (для отображения) */
+function formatDateDDMMYY(date) {
+    const d = String(date.getDate()).padStart(2, '0');
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const y = String(date.getFullYear()).slice(-2);
+    return `${d}.${m}.${y}`;
+}
+
+/** Конвертирует YYYY-MM-DD → YYMMDD (для бэкенда) */
+function convertToYYMMDD(isoDate) {
+    if (!isoDate || typeof isoDate !== 'string') {
+        console.warn('convertToYYMMDD: пустое или неверное значение');
+        return '';
+    }
+
+    // Ожидаем формат "YYYY-MM-DD"
+    const match = isoDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) {
+        console.warn('convertToYYMMDD: неверный формат, ожидался YYYY-MM-DD, получено:', isoDate);
+        return '';
+    }
+
+    const [, year, month, day] = match;
+    const result = `${day}${month}${year.slice(-2)}`;  // YYMMDD
+    console.log(`🔄 Дата: ${isoDate} → ${result}`);
+    return result;
+}
+
+// ─── ФОРМА ДОБАВЛЕНИЯ / РЕДАКТИРОВАНИЯ ───────────────────────────────────────
+
+function openAddTemplateForm() {
+    const container = document.querySelector('.templates-container');
+    const prefillProductId = container?.dataset.prefillProductId || '';
+    const productSelect = document.getElementById('templateProduct');
+
+   console.log(container);
+   console.log(prefillProductId);
+
+    document.getElementById('formTitle').textContent = '➕ Добавить шаблон печати';
+    document.getElementById('formSubmitText').textContent = 'Добавить шаблон';
+    document.getElementById('templateForm').action = '/templates';
+    document.getElementById('templateId').value = '';
+    document.getElementById('templateName').value = '';
+    document.getElementById('templateProduct').value = '';
+    document.getElementById('templatePrinter').value = '';
+    document.getElementById('templateCode').value = '';
+    document.getElementById('templateFormModal').classList.remove('hidden');
+
+    // Прокрутка к началу формы (сброс скролла полей)
+    const fieldsScroll = document.querySelector('.form-fields-scroll');
+    if (fieldsScroll) fieldsScroll.scrollTop = 0;
+
+    ['productSearchInput', 'printerSearchInput'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.value = '';
+            el.dispatchEvent(new Event('input')); // триггерим фильтрацию
+        }
+    });
+
+    if (prefillProductId) {
+        productSelect.value = prefillProductId;
+        // Триггерим change для синхронизации GTIN
+        productSelect.dispatchEvent(new Event('change'));
+    }
+
+    setTimeout(() => document.getElementById('templateName').focus(), 300);
+}
+
+function editTemplate(id, name, productId, productGtin, printerId, code) {
+    document.getElementById('formTitle').textContent = '✏️ Редактировать шаблон';
+    document.getElementById('formSubmitText').textContent = 'Сохранить изменения';
+    document.getElementById('templateForm').action = `/templates/${id}`;
+    document.getElementById('templateId').value = id;
+    document.getElementById('templateName').value = name?.trim() || '';
+    document.getElementById('templateProduct').value = productId || '';
+    document.getElementById('productGtin').value = productGtin.trim() || '';
+    document.getElementById('templatePrinter').value = printerId || '';
+
+    console.log(productGtin);
+
+    // Защита: если код не передан или "null" — пробуем прочитать из dataset
+    const textarea = document.getElementById('templateCode');
+    if (code && code !== 'null' && code !== 'undefined') {
+        textarea.value = code.trim();
+    } else {
+        // Fallback: читаем из ближайшей строки таблицы
+        const row = document.querySelector(`#templatesTableBody tr[data-id="${id}"]`);
+        textarea.value = row?.dataset.printCode?.trim() || '';
+    }
+
+    document.getElementById('templateFormModal').classList.remove('hidden');
+
+    // Сброс скролла полей
+    const fieldsScroll = document.querySelector('.form-fields-scroll');
+    if (fieldsScroll) fieldsScroll.scrollTop = 0;
+
+    // Сброс поиска при редактировании
+    ['productSearchInput', 'printerSearchInput'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.value = '';
+            el.dispatchEvent(new Event('input'));
+        }
+    });
+
+    document.getElementById('templateName').focus();
+    detectLanguage(textarea.value);
+
+    // Автоопределение языка
+    detectLanguage(textarea.value);
+}
+
+function closeTemplateForm() {
+    document.getElementById('templateFormModal').classList.add('hidden');
+    resetFormButton();
+}
+
+// ─── ПРЕДПРОСМОТР ─────────────────────────────────────────────────────────────
+
+let previewRotation = 0;
+let previewImageUrl = null;
+let currentPreviewCode = '';
+
+/** Открывает предпросмотр из строки таблицы */
+function previewTemplateFromRow(button, id, name) {
+    const row = button.closest('tr');
+    const code = row.dataset.printCode || '';
+    const gtin = row.dataset.productGtin || '';
+
+    if (!code) {
+        alert('Код шаблона недоступен для предпросмотра.\nОткройте шаблон для редактирования.');
+        return;
+    }
+
+    console.log(row.dataset.productGtin);
+
+    // Открываем форму редактирования с данными шаблона
+    editTemplate(
+        id,
+        name,
+        row.dataset.productId || '',
+        row.dataset.productGtin || '',
+        row.dataset.printerId || '',
+        code,
+    );
+    // После открытия формы сразу генерируем предпросмотр
+    setTimeout(() => {
+        currentPreviewCode = code;
+        // Прокрутка к панели предпросмотра на мобильных
+        if (window.innerWidth < 1200) {
+            document.querySelector('.preview-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    }, 300);
+}
+
+/** Открывает предпросмотр из редактора (кнопка в тулбаре) */
+function previewCodeFromEditor() {
+    const code = document.getElementById('templateCode').value.trim();
+    if (!code) {
+        alert('Введите код шаблона для предпросмотра');
+        document.getElementById('templateCode').focus();
+        return;
+    }
+    const name = document.getElementById('templateName').value.trim() || 'Временный шаблон';
+    currentPreviewCode = code;
+
+    // Показываем кнопки управления
+    document.getElementById('previewControls').style.display = 'flex';
+
+    // Сброс значений по умолчанию.
+    resetPreviewParams();
+
+    // Рендеринг изображения.
+    renderPreviewWithParams();
+
+    // Прокрутка к панели предпросмотра на мобильных
+    if (window.innerWidth < 1200) {
+        document.querySelector('.preview-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+}
+
+/** Устанавливает параметры по умолчанию и генерирует предпросмотр */
+function resetPreviewParams() {
+    const today = new Date();
+
+    const markingEl = document.getElementById('previewMarkingDate');
+    if (markingEl) markingEl.value = formatDateForInput(today);
+
+    const batchEl = document.getElementById('previewBatch');
+    if (batchEl) batchEl.value = '01';
+
+    const boxEl = document.getElementById('previewBoxNumber');
+    if (boxEl) boxEl.value = '1';
+}
+
+/** Отправляет запрос на сервер для генерации изображения этикетки */
+function renderPreviewWithParams() {
+    console.log('рендер превью');
+    const code = currentPreviewCode;
+    if (!code) {
+        document.getElementById('previewContent').innerHTML = `
+            <div class="preview-placeholder">
+                <span class="preview-placeholder-icon">⚠️</span>
+                <p>Код шаблона не загружен</p>
+                <small>Введите код или выберите шаблон из таблицы</small>
+            </div>`;
+        document.getElementById('previewControls').style.display = 'none';
+        return;
+    }
+
+    const gtin = document.getElementById('productGtin')?.value.trim();
+
+    // Читаем 3 поля
+    const markingRaw  = (document.getElementById('previewMarkingDate')?.value || '').trim();
+    const batchNumber = (document.getElementById('previewBatch')?.value || '01').trim();
+    const boxNumber   = parseInt(document.getElementById('previewBoxNumber')?.value || '1');
+
+    console.log(gtin);
+
+    // Валидация: если нет GTIN — предупреждаем
+    if (!gtin) {
+        console.warn('⚠️ GTIN не найден для выбранного шаблона');
+    }
+
+    const markingDate = convertToYYMMDD(markingRaw);
+
+    document.getElementById('previewContent').innerHTML = `
+        <div class="preview-placeholder">
+            <div class="preview-spinner"></div>
+            <p>Генерация предпросмотра...</p>
+            <small>Подстановка значений в шаблон</small>
+        </div>`;
+
+    fetch('/templates/preview/render', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+            zpl_code: code,
+            batch_number: batchNumber,
+            marking_date: markingDate,
+            // expiration_date: не передаём — бэкенд вычисляет +7 дней автоматически
+            first_box: String(boxNumber),
+            current_box: String(boxNumber),
+            gtin: gtin,
+
+        })
+    })
+    .then(response => {
+        if (!response.ok) throw new Error(`Ошибка ${response.status}: ${response.statusText}`);
+        return response.blob();
+    })
+    .then(blob => {
+        if (previewImageUrl) URL.revokeObjectURL(previewImageUrl);
+        previewImageUrl = URL.createObjectURL(blob);
+        showPreviewImage(previewImageUrl);
+        document.getElementById('previewControls').style.display = 'flex';
+    })
+    .catch(error => {
+        console.error('Ошибка предпросмотра:', error);
+        document.getElementById('previewContent').innerHTML = `
+            <div class="preview-error">
+                <div class="preview-placeholder-icon">❌</div>
+                <h3>Ошибка рендеринга</h3>
+                <p>${error.message || 'Проверьте корректность кода ZPL'}</p>
+            </div>`;
+        // document.getElementById('previewControls').style.display = 'none';
+    });
+}
+
+function showPreviewImage(url) {
+    document.getElementById('previewContent').innerHTML =
+        `<img src="${url}" class="preview-image" id="previewImage" alt="Предпросмотр этикетки">`;
+    applyPreviewRotation();
+}
+
+function applyPreviewRotation() {
+    const img = document.getElementById('previewImage');
+    if (img) img.style.transform = `rotate(${previewRotation}deg)`;
+}
+
+function rotatePreview(degrees) {
+    previewRotation += degrees;
+    applyPreviewRotation();
+}
+
+function resetPreview() {
+    previewRotation = 0;
+    applyPreviewRotation();
+}
+
+function downloadPreview() {
+    if (!previewImageUrl) { alert('Нет изображения для скачивания'); return; }
+    const link = document.createElement('a');
+    link.href = previewImageUrl;
+    link.download = `label_preview_${new Date().toISOString().replace(/[:.]/g, '-')}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+// ─── УПРАВЛЕНИЕ ШАБЛОНАМИ ─────────────────────────────────────────────────────
+
+function toggleTemplateStatus(id, name, isActive) {
+    if (!confirm(`Вы уверены, что хотите ${isActive ? 'деактивировать' : 'активировать'} шаблон "${name}"?`)) return;
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = `/templates/${id}/${isActive ? 'deactivate' : 'activate'}`;
+    document.body.appendChild(form);
+    form.submit();
+}
+
+function deleteTemplate(id, name) {
+    if (!confirm(`Вы уверены, что хотите удалить шаблон "${name}"?\n\n⚠️ Это действие нельзя отменить!`)) return;
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = `/templates/${id}/delete`;
+    document.body.appendChild(form);
+    form.submit();
+}
+
+// ─── ФИЛЬТРЫ ──────────────────────────────────────────────────────────────────
+
+function setupFilters() {
+    ['productFilter', 'printerFilter', 'statusFilter'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('change', filterTemplates);
+    });
+}
+
+function setupProductFilterFromUrl() {
+    const productId = new URLSearchParams(window.location.search).get('product_filter');
+    if (!productId) return;
+    const filter = document.getElementById('productFilter');
+    if (filter) { filter.value = productId; filter.dispatchEvent(new Event('change')); }
+}
+
+function filterTemplates() {
+    const productId = document.getElementById('productFilter')?.value || '';
+    const printerId = document.getElementById('printerFilter')?.value || '';
+    const status = document.getElementById('statusFilter')?.value || '';
+    const searchQuery = document.getElementById('templateSearch')?.value.toLowerCase().trim() || '';
+
+    document.querySelectorAll('#templatesTableBody tr').forEach(row => {
+        if (row.classList.contains('empty-row')) return;
+
+        let matches = (!productId || row.dataset.productId === productId)
+                   && (!printerId || row.dataset.printerId === printerId)
+                   && (!status || row.dataset.status === status);
+
+        if (matches && searchQuery) {
+            const templateName = row.querySelector('.template-name')?.textContent.toLowerCase() || '';
+            const productName = row.querySelector('.product-badge')?.textContent.toLowerCase() || '';
+            const printerName = row.querySelector('.printer-badge')?.textContent.toLowerCase() || '';
+            const printCode = row.dataset.printCode?.toLowerCase() || '';
+            const productGtin = row.dataset.productGtin?.toLowerCase() || '';
+            const productCode1c = row.getAttribute('data-product-code-1c')?.toLowerCase().trim() || '';
+
+            matches = templateName.includes(searchQuery)
+                   || productName.includes(searchQuery)
+                   || printerName.includes(searchQuery)
+                   || printCode.includes(searchQuery)
+                   || productGtin.includes(searchQuery)
+                   || productCode1c.includes(searchQuery);  // ← Новая проверка
+        }
+
+        if (matches && searchQuery) {
+            highlightSearchMatches(row, searchQuery);
+        } else {
+            clearSearchHighlights(row);
+        }
+
+        row.style.display = matches ? '' : 'none';
+    });
+
+    updateTemplatesCount();
+}
+
+/** Подсветка найденного текста в строке */
+function highlightSearchMatches(row, query) {
+    clearSearchHighlights(row);
+
+    const elementsToSearch = [
+        row.querySelector('.template-name'),
+        row.querySelector('.product-badge'),
+        row.querySelector('.printer-badge')
+    ];
+
+    const regex = new RegExp(`(${escapeRegex(query)})`, 'gi');
+
+    elementsToSearch.forEach(el => {
+        if (el && el.textContent) {
+            el.innerHTML = el.textContent.replace(regex, '<mark>$1</mark>');
+        }
+    });
+}
+
+/** Очистка подсветки */
+function clearSearchHighlights(row) {
+    row.querySelectorAll('mark').forEach(mark => {
+        mark.replaceWith(mark.textContent);
+    });
+}
+
+/** Экранирование спецсимволов для RegExp */
+function escapeRegex(string) {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Обновление счетчика шаблонов */
+function updateTemplatesCount() {
+    const visibleRows = document.querySelectorAll('#templatesTableBody tr:not(.empty-row):not([style*="display: none"])').length;
+    const totalRows = document.querySelectorAll('#templatesTableBody tr:not(.empty-row)').length;
+
+    // Можно добавить индикатор "Показано X из Y" рядом с заголовком
+    let counter = document.getElementById('templatesCounter');
+    if (!counter) {
+        counter = document.createElement('span');
+        counter.id = 'templatesCounter';
+        counter.className = 'templates-counter';
+        counter.style.cssText = 'margin-left: 12px; font-size: 14px; color: #666;';
+        const header = document.querySelector('.page-header h2');
+        if (header) header.appendChild(counter);
+    }
+
+    if (totalRows > 0) {
+        counter.textContent = `(${visibleRows}/${totalRows})`;
+    } else {
+        counter.textContent = '';
+    }
+}
+
+// ─── РЕДАКТОР КОДА ────────────────────────────────────────────────────────────
+
+function setupCodeEditor() {
+    const textarea = document.getElementById('templateCode');
+    if (!textarea) return;
+    textarea.addEventListener('input', () => detectLanguage(textarea.value));
+    textarea.addEventListener('keydown', e => {
+        if (e.ctrlKey && e.key === 'Enter') { e.preventDefault(); document.getElementById('templateForm').requestSubmit(); }
+    });
+}
+
+function detectLanguage(code) {
+    if (!code) return;
+    const low = code.toLowerCase();
+    const sel = document.getElementById('codeLanguage');
+    if (low.includes('^xa') && low.includes('^xz'))                          sel.value = 'zpl';
+    else if (low.includes('size') && low.includes('text') && low.includes('print')) sel.value = 'tspl';
+    else if (low.includes('a0')   && low.includes('q')   && low.includes('b'))      sel.value = 'epl';
+    else if (low.includes('input'))                                            sel.value = 'cpcl';
+    changeLanguage();
+}
+
+function changeLanguage() {
+    console.log('Язык изменён на:', document.getElementById('codeLanguage').value);
+}
+
+function formatCode() {
+    let code = document.getElementById('templateCode').value.trim();
+    if (code.includes('^XA')) {
+        code = code
+            .replace(/\^FS/g, ' ^FS\n').replace(/\^XZ/g, '\n^XZ').replace(/\^XA/g, '^XA\n')
+            .replace(/\^FO(\d+),(\d+)/g, '^FO $1,$2').replace(/\^A0N,(\d+),(\d+)/g, '^A0N,$1,$2')
+            .replace(/\n{3,}/g, '\n\n');
+    } else if (code.includes('SIZE') && code.includes('PRINT')) {
+        code = code
+            .replace(/SIZE/g, '\nSIZE').replace(/GAP/g, '\nGAP').replace(/DIRECTION/g, '\nDIRECTION')
+            .replace(/REFERENCE/g, '\nREFERENCE').replace(/CLS/g, '\nCLS')
+            .replace(/TEXT/g, '\nTEXT').replace(/PRINT/g, '\nPRINT\n').trim();
+    }
+    document.getElementById('templateCode').value = code.trim();
+    alert('Код отформатирован');
+}
+
+function validateCode() {
+    const code = document.getElementById('templateCode').value.trim();
+    if (!code) { alert('Код шаблона не может быть пустым'); return; }
+    if (code.startsWith('^XA') && !code.endsWith('^XZ')) {
+        if (!confirm('⚠️ Шаблон ZPL должен заканчиваться ^XZ.\nПродолжить валидацию на сервере?')) return;
+    }
+    fetch('/zpl_render_local', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': getCSRFToken() },
+        body: JSON.stringify({ zpl: code })
+    })
+    .then(r => r.json())
+    .then(data => {
+        alert(data.success
+            ? '✅ Код шаблона прошёл валидацию!'
+            : `⚠️ Предупреждения:\n${data.warnings?.join('\n') || 'Нет предупреждений'}`);
+    })
+    .catch(err => alert(`❌ Ошибка валидации:\n${err.message}`));
+}
+
+// ─── СПРАВКА ──────────────────────────────────────────────────────────────────
+
+function showSyntaxHelp(e) { e.preventDefault(); document.getElementById('syntaxHelpModal').classList.remove('hidden'); }
+function closeSyntaxHelp() { document.getElementById('syntaxHelpModal').classList.add('hidden'); }
+
+// ─── МОДАЛЬНЫЕ ОКНА ───────────────────────────────────────────────────────────
+
+function setupModalCloseHandlers() {
+    // document.querySelectorAll('.modal').forEach(modal => {
+    //    modal.addEventListener('click', e => {
+    //        if (e.target !== modal) return;
+    //        if (modal.id === 'templateFormModal') closeTemplateForm();
+    //        else if (modal.id === 'syntaxHelpModal') closeSyntaxHelp();
+    //    });
+    //});
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape') { closeTemplateForm(); closeSyntaxHelp(); }
+    });
+}
+
+// ─── ФОРМА: ВАЛИДАЦИЯ И AJAX-ОТПРАВКА ─────────────────────────────────────────
+
+function setupFormValidation() {
+    const form = document.getElementById('templateForm');
+    if (!form) return;
+
+    form.addEventListener('submit', function (e) {
+        e.preventDefault();
+
+        const name      = document.getElementById('templateName').value.trim();
+        const productId = document.getElementById('templateProduct').value;
+        const printerId = document.getElementById('templatePrinter').value;
+        const code      = document.getElementById('templateCode').value.trim();
+        const templateId = document.getElementById('templateId').value;
+
+        // Валидация
+        if (name.length < 2)   { alert('Наименование должно содержать минимум 2 символа'); document.getElementById('templateName').focus(); return; }
+        if (name.length > 200) { alert('Наименование не должно превышать 200 символов');   document.getElementById('templateName').focus(); return; }
+        if (!productId)        { alert('Пожалуйста, выберите продукт');  document.getElementById('templateProduct').focus(); return; }
+        if (!printerId)        { alert('Пожалуйста, выберите принтер');  document.getElementById('templatePrinter').focus(); return; }
+        if (code.length < 5)   { alert('Код шаблона должен содержать минимум 5 символов'); document.getElementById('templateCode').focus(); return; }
+
+        if (/~j[crb]/i.test(code)) {
+            if (!confirm('⚠️ Код содержит команды очистки памяти принтера.\nПродолжить?')) { return; }
+        }
+
+        // Блокировка кнопки
+        const btn = document.getElementById('formSubmitBtn');
+        const originalBtnText = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="btn-text">Сохранение...</span>';
+
+        // Сбор данных формы
+        const formData = new FormData(form);
+
+        // Определяем URL и метод
+        const url = templateId ? `/templates/${templateId}` : '/templates';
+        const method = 'POST';
+
+        fetch(url, {
+            method: method,
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-CSRF-Token': getCSRFToken(),
+                // Не устанавливаем Content-Type вручную для FormData — браузер сделает это сам с boundary
+            },
+            body: formData
+        })
+        .then(async response => {
+            // Пробуем получить JSON, но на случай ошибки парсинга — текст
+            const contentType = response.headers.get('content-type');
+            let data;
+            if (contentType && contentType.includes('application/json')) {
+                data = await response.json();
+            } else {
+                const text = await response.text();
+                throw new Error(`Сервер вернул не JSON: ${response.status} ${text.substring(0, 200)}`);
+            }
+
+            if (!response.ok) {
+                throw new Error(data.error || data.message || `Ошибка ${response.status}`);
+            }
+            return data;
+        })
+        .then(data => {
+            // Опционально: обновить таблицу, если это редактирование
+            if (templateId) {
+                alert('✅ Шаблон успешно обновлён!');
+
+                const productSelect = document.getElementById('templateProduct');
+                const printerSelect = document.getElementById('templatePrinter');
+
+                updateTableRow(templateId, {
+                    name: name,
+                    product_id: productId,
+                    printer_id: printerId,
+                    product_name: productSelect.options[productSelect.selectedIndex]?.text.split(' (')[0] || '',
+                    printer_name: printerSelect.options[printerSelect.selectedIndex]?.text.split(' (')[0] || '',
+                    print_code: code
+                });
+            } else {
+                // Для нового шаблона — перезагрузить страницу или добавить строку через AJAX
+                if (!templateId) {
+                    const newRowHTML = createTableRow(data.template);
+                    const tableBody = document.getElementById('templatesTableBody');
+
+                    // Если была заглушка "Нет шаблонов", удаляем её
+                    const emptyRow = tableBody.querySelector('.empty-row');
+                    if (emptyRow) emptyRow.parentElement.removeChild(emptyRow);
+
+                    tableBody.insertAdjacentHTML('afterbegin', newRowHTML);
+
+                    // 🔄 Обновляем нумерацию строк (столбец №)
+                    tableBody.querySelectorAll('tr:not(.empty-row)').forEach((row, index) => {
+                        const numCell = row.querySelector('td:first-child');
+                        if (numCell) numCell.textContent = index + 1;
+                    });
+
+                    alert('✅ Шаблон успешно добавлен!');
+                    closeTemplateForm();
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Ошибка сохранения:', error);
+            alert(`❌ Ошибка: ${error.message}`);
+        })
+        .finally(() => {
+            // Разблокировка кнопки
+            btn.disabled = false;
+            btn.innerHTML = originalBtnText;
+        });
+    });
+}
+
+/** Вспомогательная функция: обновление строки таблицы после редактирования */
+function updateTableRow(templateId, data) {
+    // Ищем строку по data-id
+    const row = document.querySelector(`#templatesTableBody tr[data-id="${templateId}"]`);
+    if (!row) {
+        console.warn(`updateTableRow: строка с id="${templateId}" не найдена, перезагружаем...`);
+        window.location.reload();
+        return;
+    }
+
+    // Обновляем название шаблона
+    const nameCell = row.querySelector('.template-name');
+    if (nameCell && data.name) {
+        nameCell.textContent = data.name;
+    }
+
+    // Обновляем бейдж продукта
+    const productBadge = row.querySelector('.product-badge');
+    if (productBadge && data.product_name) {
+        productBadge.textContent = data.product_name;
+        productBadge.className = 'product-badge'; // сброс классов
+    }
+
+    // Обновляем бейдж принтера
+    const printerBadge = row.querySelector('.printer-badge');
+    if (printerBadge && data.printer_name) {
+        printerBadge.textContent = data.printer_name;
+        printerBadge.className = 'printer-badge';
+    }
+
+    // Обновляем data-атрибуты для фильтров и предпросмотра
+    if (data.product_id) row.dataset.productId = data.product_id;
+    if (data.product_gtin !== undefined) row.dataset.gtin = data.product_gtin;
+    if (data.printer_id) row.dataset.printerId = data.printer_id;
+    if (data.is_active !== undefined) row.dataset.status = data.is_active ? 'active' : 'inactive';
+    if (data.print_code) row.dataset.printCode = data.print_code;
+
+    // Обновляем бейдж типа кода (ZPL/TSPL)
+    const typeBadge = row.querySelector('.type-badge');
+    if (typeBadge && data.print_code) {
+        if (data.print_code.startsWith('^XA')) {
+            typeBadge.className = 'type-badge zpl';
+            typeBadge.textContent = 'ZPL';
+        } else if (data.print_code.startsWith('SIZE')) {
+            typeBadge.className = 'type-badge tspl';
+            typeBadge.textContent = 'TSPL';
+        } else {
+            typeBadge.className = 'type-badge other';
+            typeBadge.textContent = 'Другой';
+        }
+    }
+
+    // Визуальная подсветка обновления
+    row.style.transition = 'background-color 0.3s ease';
+    row.style.backgroundColor = '#d4edda';
+    setTimeout(() => {
+        row.style.backgroundColor = '';
+    }, 2000);
+}
+
+/** Создаёт HTML-строку таблицы для нового шаблона */
+function createTableRow(template) {
+    // Определяем тип кода для бейджа
+    let typeBadge = 'other';
+    let typeText = 'Другой';
+    if (template.print_code && template.print_code.startsWith('^XA')) {
+        typeBadge = 'zpl'; typeText = 'ZPL';
+    } else if (template.print_code && template.print_code.startsWith('SIZE')) {
+        typeBadge = 'tspl'; typeText = 'TSPL';
+    }
+
+    const statusClass = template.is_active ? 'active' : 'inactive';
+    const statusText = template.is_active ? 'Активен' : 'Неактивен';
+    const formattedDate = template.created_at
+        ? new Date(template.created_at).toLocaleString('ru-RU', {
+            day: '2-digit', month: '2-digit', year: '2-digit',
+            hour: '2-digit', minute: '2-digit'
+        }).replace(/\//g, '.')
+        : '';
+
+    const productName = template.product_name || 'Загрузка...';
+    const printerName = template.printer_name || 'Загрузка...';
+
+    //  JSON.stringify корректное экранирование.
+    const jsId = JSON.stringify(String(template.id || ''));
+    const jsName = JSON.stringify(template.name || '');
+
+    // Экранируем кавычки для HTML-атрибутов (data-print-code)
+    const safePrintCode = (template.print_code || '').replace(/"/g, '&quot;');
+
+    // Проверяем права доступа
+    const isAdmin = window.isUserAdmin || false;
+
+    return `
+<tr data-id="${template.id}"
+    data-product-id="${template.product_id || ''}"
+    data-product-gtin="${template.product_gtin || ''}"
+    data-product-code-1c="${template.product_code_1c?.toString() || ''}"
+    data-printer-id="${template.printer_id || ''}"
+    data-status="${statusClass}"
+    data-print-code="${safePrintCode}">
+    <td>1</td>
+    <td>
+        <strong class="template-name">${template.name || ''}</strong>
+        <div class="template-type">
+            <span class="type-badge ${typeBadge}">${typeText}</span>
+        </div>
+    </td>
+    <td><span class="product-badge">${productName}</span></td>
+    <td><span class="printer-badge">${printerName}</span></td>
+    <td><span class="status-badge ${statusClass}">${statusText}</span></td>
+    <td>${formattedDate}</td>
+    <td class="actions-cell">
+        <button class="table-btn edit-btn"
+            data-template-id="${template.id}"
+            onclick='editTemplateFromRow(this, ${jsId}, ${jsName})'>
+            ✏️ Редактировать
+        </button>
+        <button class="table-btn toggle-btn ${template.is_active ? 'is-active' : 'is-not-active'}"
+            onclick='toggleTemplateStatus(${jsId}, ${jsName}, ${template.is_active})'>
+            ${template.is_active ? '⏸️ Отключить' : '▶️ Включить'}
+        </button>
+        ${isAdmin ? `
+        <button class="table-btn delete-btn"
+            onclick='deleteTemplate(${jsId}, ${jsName})'>
+            🗑️ Удалить
+        </button>
+        ` : ''}
+    </td>
+</tr>`;
+}
+
+function setupProductGtinSync() {
+    const productSelect = document.getElementById('templateProduct');
+    const gtinInput = document.getElementById('productGtin');
+    if (!productSelect || !gtinInput) return;
+
+    const updateGtin = () => {
+        const selectedOption = productSelect.options[productSelect.selectedIndex];
+        if (!selectedOption || !selectedOption.value) {
+            gtinInput.value = '';
+            return;
+        }
+        // Берём data-product-gtin из выбранной опции
+        gtinInput.value = selectedOption.dataset.productGtin || '';
+        console.log('GTIN обновлён:', gtinInput.value);
+    };
+
+    productSelect.addEventListener('change', updateGtin);
+    updateGtin(); // при открытии формы
+}
+
+function resetFormButton() {
+    const btn = document.getElementById('formSubmitBtn');
+    if (btn) { btn.disabled = false; btn.innerHTML = '<span class="btn-text" id="formSubmitText">Добавить шаблон</span>'; }
+}
+
+function editTemplateFromRow(button, id, name) {
+    const row = button.closest('tr');
+
+    const code = row.dataset.printCode || '';
+    const productId = row.dataset.productId || '';
+    // читаем оба варианта атрибута для совместимости
+    const productGtin = row.dataset.productGtin || '';
+    const printerId = row.dataset.printerId || '';
+    const isActive = row.dataset.status === 'active';
+
+    editTemplate(id, name, productId, productGtin, printerId, code);
+
+    if (window.innerWidth < 1200) {
+        document.querySelector('.form-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+}
+
+/** Инициализация поиска для всех .searchable-select */
+function setupSelectSearch() {
+    document.querySelectorAll('.searchable-select').forEach(select => {
+        const searchInputId = select.dataset.searchTarget;
+        const searchInput = document.getElementById(searchInputId);
+        if (!searchInput) return;
+
+        console.log(searchInput);
+
+        // Берём уже существующий form-hint рядом с select, а не создаём новый div
+        const formHint = select.closest('.form-group')?.querySelector('.form-hint');
+
+        // Считаем общее количество реальных опций (один раз, не меняется)
+        const totalCount = Array.from(select.options).filter((_, i) => i !== 0).length;
+
+        // Сохраняем исходный текст подсказки для сброса
+        const defaultHintText = formHint
+            ? `Показано ${totalCount} из ${totalCount}. Введите для поиска.`
+            : '';
+
+        if (formHint) formHint.textContent = defaultHintText;
+
+        const filterOptions = (query) => {
+            const q = query.toLowerCase().trim();
+            let visibleCount = 0;
+
+            Array.from(select.options).forEach((option, index) => {
+                if (index === 0) {
+                    option.classList.remove('filtered');
+                    option.style.display = '';
+                    return;
+                }
+
+                const searchable = option.dataset.searchable || '';
+                const text = option.textContent.toLowerCase();
+
+                if (!q || searchable.includes(q) || text.includes(q)) {
+                    option.classList.remove('filtered');
+                    option.style.display = '';
+                    visibleCount++;
+                } else {
+                    option.classList.add('filtered');
+                    option.style.display = 'none';
+                }
+            });
+
+            // Обновляем form-hint
+            if (formHint) {
+                if (q) {
+                    formHint.textContent = visibleCount > 0
+                        ? `Показано ${visibleCount} из ${totalCount}.`
+                        : 'Ничего не найдено.';
+                } else {
+                    formHint.textContent = defaultHintText;
+                }
+            }
+
+            if (select.value && select.options[select.selectedIndex]?.classList.contains('filtered')) {
+                select.value = '';
+            }
+        };
+
+        searchInput.addEventListener('input', (e) => filterOptions(e.target.value));
+
+        searchInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                searchInput.value = '';
+                filterOptions('');
+                searchInput.blur();
+            }
+        });
+
+        searchInput.addEventListener('click', (e) => {
+            e.stopPropagation();
+            searchInput.select();
+        });
+    });
+}
+
+// ─── ПОИСК ПО ШАБЛОНАМ ──────────────────────────────────────────────────────
+
+function setupTemplateSearch() {
+    const searchInput = document.getElementById('templateSearch');
+    const clearBtn = document.getElementById('searchClearBtn');
+
+    if (!searchInput) return;
+
+    // Поиск при вводе с задержкой
+    let searchTimeout;
+    searchInput.addEventListener('input', (e) => {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => {
+            filterTemplates();
+            // Показываем/скрываем кнопку очистки
+            if (clearBtn) {
+                clearBtn.style.display = e.target.value ? 'block' : 'none';
+            }
+        }, 200);
+    });
+
+    // Очистка поиска
+    if (clearBtn) {
+        clearBtn.addEventListener('click', () => {
+            searchInput.value = '';
+            clearBtn.style.display = 'none';
+            filterTemplates();
+            searchInput.focus();
+        });
+    }
+
+    // Очистка по Escape
+    searchInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            searchInput.value = '';
+            clearBtn.style.display = 'none';
+            filterTemplates();
+            searchInput.blur();
+        }
+    });
+}
+</script>
+{% endblock %}

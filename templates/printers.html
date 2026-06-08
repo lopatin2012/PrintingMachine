@@ -1,0 +1,565 @@
+<!-- templates/printers.html -->
+{% extends "base.html" %}
+
+{% block title %}Управление принтерами{% endblock %}
+
+{% block css %}
+<link rel="stylesheet" href="/static/css/printers.css">
+{% endblock %}
+
+{% block header_title %}Управление принтерами{% endblock %}
+
+{% block subtitle %}
+<div class="subtitle">Управление промышленными принтерами для печати этикеток</div>
+{% endblock %}
+
+{% block back_link %}
+<a class="link-button" href="/">← На главную</a>
+{% endblock %}
+
+{% block content %}
+<div class="printers-container">
+    <!-- Меню управления принтерами -->
+    <div class="page-header">
+        <h2>🖨️ Список принтеров</h2>
+        {% if user and user.role and user.role.is_admin %}
+        <button id="addPrinterBtn" class="action-button primary">
+            <span class="button-icon">➕</span>
+            <span class="button-text">Добавить принтер</span>
+        </button>
+        {% endif %}
+    </div>
+
+    <!-- Фильтры -->
+    <div class="filter-section">
+        <div class="filter-group">
+            <label for="workshopFilter" class="filter-label">Цех:</label>
+            <select id="workshopFilter" class="filter-select">
+                <option value="">Все цеха</option>
+                {% for workshop in workshops %}
+                <option value="{{ workshop.id }}">{{ workshop.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="filter-group">
+            <label for="lineFilter" class="filter-label">Линия:</label>
+            <select id="lineFilter" class="filter-select" disabled>
+                <option value="">Все линии</option>
+                {% for line in lines %}
+                <option value="{{ line.id }}" data-workshop-id="{{ line.workshop_id }}">
+                    {{ line.name }} (цех: {{ line.workshop.name if line.workshop else 'не указан' }})
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+
+    <!-- Уведомления -->
+    {% if success %}
+    <div class="alert success">
+        <span>{{ success }}</span>
+    </div>
+    {% endif %}
+
+    {% if error %}
+    <div class="alert error">
+        <span>{{ error }}</span>
+    </div>
+    {% endif %}
+
+    <!-- Таблица принтеров -->
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>№</th>
+                    <th>Наименование</th>
+                    <th>IP-адрес</th>
+                    <th>Порт</th>
+                    <th>Цех</th>
+                    <th>Линия</th>
+                    <th>Дата создания</th>
+                    {% if user and user.role and user.role.is_admin %}
+                    <th>Действия</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody id="printersTableBody">
+                {% if printers %}
+                {% for printer in printers %}
+                <tr data-line-id="{{ printer.line_id }}"
+                    data-workshop-id="{{ printer.line.workshop_id if printer.line and printer.line.workshop else '' }}">
+                    <td>{{ loop.index }}</td>
+                    <td><strong>{{ printer.name }}</strong></td>
+                    <td class="ip-cell">
+                        <span class="ip-badge">{{ printer.ip_address }}</span>
+                    </td>
+                    <td>{{ printer.port_address }}</td>
+                    <td>
+                        {% if printer.line and printer.line.workshop %}
+                        <span class="workshop-badge">{{ printer.line.workshop.name }}</span>
+                        {% else %}
+                        <span class="workshop-badge unknown">Цех не указан</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if printer.line %}
+                        <span class="line-badge">{{ printer.line.name }}</span>
+                        {% else %}
+                        <span class="line-badge unknown">Линия не указана</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ printer.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+                    {% if user and user.role and user.role.is_admin %}
+                    <td class="actions-cell">
+                        <button class="table-btn edit-btn"
+                                onclick='editPrinter("{{ printer.id }}", "{{ printer.name|e }}", "{{ printer.ip_address|e }}", {{ printer.port_address }}, "{{ printer.line_id }}")'>
+                            ✏️ Редактировать
+                        </button>
+                        <button class="table-btn delete-btn"
+                                onclick='deletePrinter("{{ printer.id }}", "{{ printer.name|e }}")'>
+                            🗑️ Удалить
+                        </button>
+                        <button class="table-btn test-btn"
+                                onclick='testPrinterConnection("{{ printer.id }}", "{{ printer.ip_address|e }}", {{ printer.port_address }})'>
+                            🔄 Проверить
+                        </button>
+                    </td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+                {% else %}
+                <tr>
+                    <td colspan="8" class="empty-row">🖨️ Нет принтеров</td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Форма добавления/редактирования -->
+    <div id="printerFormModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="formTitle">➕ Добавить принтер</h3>
+                <button class="close-btn" onclick="closePrinterForm()">&times;</button>
+            </div>
+
+            <form id="printerForm" method="post" action="/printers">
+                <input type="hidden" id="printerId" name="id">
+
+                <div class="form-group">
+                    <label for="printerName" class="form-label">
+                        <span class="label-icon">🖨️</span>
+                        Наименование принтера
+                    </label>
+                    <div class="input-wrapper">
+                        <input
+                            type="text"
+                            id="printerName"
+                            name="name"
+                            required
+                            class="form-input"
+                            placeholder="Введите название принтера (например: Zebra ZT410)"
+                            maxlength="50"
+                        >
+                    </div>
+                    <small class="form-hint">Уникальное название принтера, максимум 50 символов</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="lineId" class="form-label">
+                        <span class="label-icon">🏭</span>
+                        Линия
+                    </label>
+                    <div class="input-wrapper">
+                        <select
+                            id="lineId"
+                            name="line_id"
+                            required
+                            class="form-input"
+                        >
+                            <option value="">Выберите линию</option>
+                            {% for line in lines %}
+                            <option value="{{ line.id }}" data-workshop-id="{{ line.workshop_id }}">
+                                {{ line.name }} (цех: {{ line.workshop.name if line.workshop else 'не указан' }})
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <small class="form-hint">Принтер будет привязан к выбранной линии</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="ipAddress" class="form-label">
+                        <span class="label-icon">🌐</span>
+                        IP-адрес
+                    </label>
+                    <div class="input-wrapper">
+                        <input
+                            type="text"
+                            id="ipAddress"
+                            name="ip_address"
+                            required
+                            class="form-input"
+                            placeholder="192.168.1.100"
+                            pattern="^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
+                        >
+                    </div>
+                    <small class="form-hint">Корректный IPv4 адрес принтера в локальной сети</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="portAddress" class="form-label">
+                        <span class="label-icon">🔌</span>
+                        Порт
+                    </label>
+                    <div class="input-wrapper">
+                        <input
+                            type="number"
+                            id="portAddress"
+                            name="port_address"
+                            required
+                            class="form-input"
+                            value="9100"
+                            min="1"
+                            max="65535"
+                        >
+                    </div>
+                    <small class="form-hint">Стандартный порт принтеров Zebra — 9100</small>
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="btn-secondary" onclick="closePrinterForm()">Отмена</button>
+                    <button type="submit" class="btn-submit" id="formSubmitBtn">
+                        <span class="btn-text" id="formSubmitText">Добавить принтер</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Модальное окно тестирования подключения -->
+    <div id="testConnectionModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>🔄 Проверка подключения</h3>
+                <button class="close-btn" onclick="closeTestModal()">&times;</button>
+            </div>
+            <div class="test-result" id="testResult">
+                <p>Подключение к принтеру...</p>
+                <div class="spinner"></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Глобальные переменные для фильтров
+let linesByWorkshop = {};
+
+// Инициализация после загрузки DOM
+document.addEventListener('DOMContentLoaded', function() {
+    // Собираем линии по цехам для фильтрации
+    {% for line in lines %} {
+        const workshopId = "{{ line.workshop_id }}";
+        if (!linesByWorkshop[workshopId]) {
+            linesByWorkshop[workshopId] = [];
+        }
+        linesByWorkshop[workshopId].push({
+            id: "{{ line.id }}",
+            name: "{{ line.name|e }}",
+            workshopName: "{{ line.workshop.name if line.workshop else 'не указан'|e }}"
+        });
+    }
+    {% endfor %}
+
+    // Обработчики фильтров
+    const workshopFilter = document.getElementById('workshopFilter');
+    const lineFilter = document.getElementById('lineFilter');
+
+    if (workshopFilter) {
+        workshopFilter.addEventListener('change', filterByWorkshop);
+    }
+    if (lineFilter) {
+        lineFilter.addEventListener('change', filterByLine);
+    }
+
+    // Кнопка добавления принтера
+    const addBtn = document.getElementById('addPrinterBtn');
+    if (addBtn) {
+        addBtn.addEventListener('click', openAddPrinterForm);
+    }
+
+    // Закрытие модальных окон при клике вне их
+    setupModalCloseHandlers();
+
+    // Валидация формы
+    setupFormValidation();
+});
+
+// Фильтрация по цеху
+function filterByWorkshop() {
+    const workshopId = this.value;
+    const lineFilter = document.getElementById('lineFilter');
+
+    // Очищаем и обновляем список линий
+    lineFilter.innerHTML = '<option value="">Все линии</option>';
+
+    if (workshopId && linesByWorkshop[workshopId]) {
+        linesByWorkshop[workshopId].forEach(line => {
+            const option = document.createElement('option');
+            option.value = line.id;
+            option.textContent = `${line.name} (цех: ${line.workshopName})`;
+            lineFilter.appendChild(option);
+        });
+        lineFilter.disabled = false;
+    } else {
+        lineFilter.disabled = true;
+    }
+
+    // Фильтруем таблицу
+    filterTable();
+}
+
+// Фильтрация по линии
+function filterByLine() {
+    filterTable();
+}
+
+// Фильтрация таблицы
+function filterTable() {
+    const workshopId = document.getElementById('workshopFilter')?.value || '';
+    const lineId = document.getElementById('lineFilter')?.value || '';
+    const rows = document.querySelectorAll('#printersTableBody tr');
+
+    rows.forEach(row => {
+        const rowLineId = row.dataset.lineId;
+        const rowWorkshopId = row.dataset.workshopId;
+
+        const workshopMatch = !workshopId || rowWorkshopId === workshopId;
+        const lineMatch = !lineId || rowLineId === lineId;
+
+        row.style.display = (workshopMatch && lineMatch) ? '' : 'none';
+    });
+}
+
+// Открыть форму добавления
+function openAddPrinterForm() {
+    document.getElementById('formTitle').textContent = '➕ Добавить принтер';
+    document.getElementById('formSubmitText').textContent = 'Добавить принтер';
+    document.getElementById('printerForm').action = '/printers';
+    document.getElementById('printerId').value = '';
+    document.getElementById('printerName').value = '';
+    document.getElementById('ipAddress').value = '';
+    document.getElementById('portAddress').value = '9100';
+    document.getElementById('lineId').value = '';
+    document.getElementById('printerFormModal').classList.remove('hidden');
+}
+
+// Открыть форму редактирования
+function editPrinter(id, name, ip, port, lineId) {
+    document.getElementById('formTitle').textContent = '✏️ Редактировать принтер';
+    document.getElementById('formSubmitText').textContent = 'Сохранить изменения';
+    document.getElementById('printerForm').action = `/printers/${id}`;
+    document.getElementById('printerId').value = id;
+    document.getElementById('printerName').value = name.trim();
+    document.getElementById('ipAddress').value = ip.trim();
+    document.getElementById('portAddress').value = port;
+    document.getElementById('lineId').value = lineId;
+    document.getElementById('printerFormModal').classList.remove('hidden');
+    document.getElementById('printerName').focus();
+}
+
+// Закрыть форму принтера
+function closePrinterForm() {
+    document.getElementById('printerFormModal').classList.add('hidden');
+    resetFormButton();
+}
+
+// Удалить принтер
+function deletePrinter(id, name) {
+    name = String(name || 'без названия');
+
+    if (confirm(`Вы уверены, что хотите удалить принтер "${name}"?\n\n⚠️ Внимание: Все связанные шаблоны печати также будут удалены!`)) {
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = `/printers/${id}/delete`;
+        document.body.appendChild(form);
+        form.submit();
+    }
+}
+
+// Проверить подключение к принтеру
+function testPrinterConnection(id, ip, port) {
+    document.getElementById('testConnectionModal').classList.remove('hidden');
+    const resultDiv = document.getElementById('testResult');
+    resultDiv.innerHTML = `
+        <p>Проверка подключения к принтеру...</p>
+        <div class="spinner"></div>
+        <small style="display:block; margin-top:12px; color:#6c757d;">
+            Проверка: ${ip}:${port} (таймаут 3 сек)
+        </small>
+    `;
+
+    // Отправляем запрос на бэкенд
+    fetch(`/printers/${id}/test`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest'
+        },
+        credentials: 'same-origin' // Для передачи cookies
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`Сервер вернул ошибку ${response.status}`);
+        }
+        return response.json();
+    })
+    .then(data => {
+        if (data.available) {
+            resultDiv.innerHTML = `
+                <div class="alert success" style="padding:20px; text-align:center;">
+                    <h3 style="margin:0 0 12px; color:#2e7d32;">Принтер доступен!</h3>
+                    <p style="margin:0 0 12px; font-size:16px;">${data.message}</p>
+                </div>
+                <button class="btn-submit" onclick="closeTestModal()" style="margin-top:20px; width:100%; padding:12px; font-size:16px;">
+                    Закрыть
+                </button>
+            `;
+        } else {
+            resultDiv.innerHTML = `
+                <div class="alert error" style="padding:20px; text-align:center;">
+                    <h3 style="margin:0 0 12px; color:#a71d2a;">Принтер недоступен!</h3>
+                    <p style="margin:0 0 12px; font-size:16px; margin-bottom:16px;">${data.message}</p>
+                    <div style="background:#fff3cd; border-left:4px solid #ffc107; padding:12px; border-radius:6px; margin-top:16px; text-align:left;">
+                        <strong>Возможные причины:</strong>
+                        <ul style="margin:8px 0 0 20px; padding-left:0;">
+                            <li>Принтер выключен или не подключён к сети</li>
+                            <li>Неверный IP-адрес или порт</li>
+                            <li>Брандмауэр блокирует подключение</li>
+                            <li>Принтер занят другой задачей</li>
+                        </ul>
+                    </div>
+                </div>
+                <button class="btn-secondary" onclick="closeTestModal()" style="margin-top:20px; width:100%; padding:12px; font-size:16px;">
+                    Закрыть
+                </button>
+            `;
+        }
+    })
+    .catch(error => {
+        console.error('Ошибка при проверке подключения:', error);
+        resultDiv.innerHTML = `
+            <div class="alert error" style="padding:20px; text-align:center;">
+                <h3 style="margin:0 0 12px; color:#a71d2a;">Ошибка проверки</h3>
+                <p style="margin:0 0 12px; font-size:16px;">${error.message || 'Не удалось связаться с сервером'}</p>
+            </div>
+            <button class="btn-secondary" onclick="closeTestModal()" style="margin-top:20px; width:100%; padding:12px; font-size:16px;">
+                Закрыть
+            </button>
+        `;
+    });
+}
+
+// Закрыть модальное окно тестирования
+function closeTestModal() {
+    document.getElementById('testConnectionModal').classList.add('hidden');
+}
+
+// Сброс кнопки формы
+function resetFormButton() {
+    const submitBtn = document.getElementById('formSubmitBtn');
+    submitBtn.disabled = false;
+    submitBtn.innerHTML = '<span class="btn-text" id="formSubmitText">Добавить принтер</span>';
+}
+
+// Настройка закрытия модальных окон
+function setupModalCloseHandlers() {
+    const modals = document.querySelectorAll('.modal');
+    modals.forEach(modal => {
+        modal.addEventListener('click', function(event) {
+            if (event.target === modal) {
+                if (modal.id === 'printerFormModal') {
+                    closePrinterForm();
+                } else if (modal.id === 'testConnectionModal') {
+                    closeTestModal();
+                }
+            }
+        });
+    });
+
+    // Закрытие по Escape
+    document.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape') {
+            closePrinterForm();
+            closeTestModal();
+        }
+    });
+}
+
+// Валидация формы
+function setupFormValidation() {
+    const form = document.getElementById('printerForm');
+    if (!form) return;
+
+    form.addEventListener('submit', function(e) {
+        const name = document.getElementById('printerName')?.value.trim() || '';
+        const ip = document.getElementById('ipAddress')?.value.trim() || '';
+        const port = document.getElementById('portAddress')?.value || '';
+        const lineId = document.getElementById('lineId')?.value || '';
+
+        // Валидация названия
+        if (name.length < 2) {
+            e.preventDefault();
+            alert('Название принтера должно содержать минимум 2 символа');
+            document.getElementById('printerName')?.focus();
+            return false;
+        }
+
+        if (name.length > 50) {
+            e.preventDefault();
+            alert('Название принтера не должно превышать 50 символов');
+            document.getElementById('printerName')?.focus();
+            return false;
+        }
+
+        // Валидация IP-адреса (простая регулярка)
+        const ipPattern = /^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+        if (!ipPattern.test(ip)) {
+            e.preventDefault();
+            alert('Введите корректный IPv4 адрес (например: 192.168.1.100)');
+            document.getElementById('ipAddress')?.focus();
+            return false;
+        }
+
+        // Валидация порта
+        const portNum = parseInt(port);
+        if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
+            e.preventDefault();
+            alert('Порт должен быть в диапазоне от 1 до 65535');
+            document.getElementById('portAddress')?.focus();
+            return false;
+        }
+
+        // Валидация выбора линии
+        if (!lineId) {
+            e.preventDefault();
+            alert('Пожалуйста, выберите линию для принтера');
+            document.getElementById('lineId')?.focus();
+            return false;
+        }
+
+        // Показать состояние загрузки
+        const submitBtn = document.getElementById('formSubmitBtn');
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<span class="btn-text">Сохранение...</span><span class="btn-spinner"></span>';
+        }
+    });
+}
+</script>
+{% endblock %}

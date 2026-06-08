@@ -1,0 +1,138 @@
+<!-- templates/preview.html -->
+
+{% extends "base.html" %}
+
+{% block title %}ZPL предпросмотр{% endblock %}
+
+{% block header_title %}ZPL предпросмотр{% endblock %}
+
+{% block subtitle %}
+<div class="subtitle">Рендеринг этикеток ZPL</div>
+{% endblock %}
+
+{% block back_link %}
+<a class="link-button" href="/"><- На главную</a>
+{% endblock %}
+
+{% block content %}
+<div class="panels">
+    <!-- Левая колонка: ввод и управление -->
+    <div class="panel">
+        <h2>Ввод ZPL-кода</h2>
+        <textarea id="zplInput"
+                  placeholder="Вставьте ваш ZPL-код сюда... Например: ^XA^PW800^LL600^FO50,50^A0N,30^FDHello^FS^XZ"></textarea>
+        <div class="btn-group">
+            <button onclick="fetchAndDisplayPreview()">Получить превью</button>
+        </div>
+
+        <h2 style="margin-top: 24px;">Управление</h2>
+        <div class="btn-group">
+            <button class="secondary" onclick="rotatePreview90()">↻ Повернуть</button>
+        </div>
+        <div class="rotation-info" style="margin-top: 12px;">
+            <strong>Поворот:</strong> <span id="rotationValue">0°</span>
+        </div>
+    </div>
+
+    <!-- Правая колонка: предпросмотр -->
+    <div class="panel preview-panel">
+        <h2>Предпросмотр этикетки</h2>
+        <div id="preview" class="hidden preview-content"></div>
+    </div>
+</div>
+
+<!-- Админский блок с формой добавления -->
+{% if user and user.role == "admin" %}
+<div class="admin-section">
+    <h2>Добавить ZPL-шаблон</h2>
+
+    <p class="form-description">
+        Заполните данные продукта и вставьте ZPL-шаблон.
+        В шаблоне можно использовать переменные:
+        <code>{batch}</code>, <code>{box_number}</code>, <code>{marking_date}</code> и т.д.
+    </p>
+
+    <div class="alert success hidden" id="success-alert">
+        ZPL-шаблон успешно добавлен!
+    </div>
+
+    <div class="alert error hidden" id="error-alert">
+        Произошла ошибка при добавлении шаблона.
+    </div>
+
+    <form class="admin-form" id="addZplForm">
+        <div>
+            <div class="form-group">
+                <label for="workshop">Цех *</label>
+                <input type="text" id="workshop" name="workshop"
+                       placeholder="Например: Упаковочный цех" required>
+                <small class="form-hint">Название производственного цеха</small>
+            </div>
+
+            <div class="form-group">
+                <label for="line">Линия *</label>
+                <input type="text" id="line" name="line"
+                       placeholder="Например: Линия 3" required>
+                <small class="form-hint">Название линии</small>
+            </div>
+
+            <div class="form-group">
+                <label for="code">Код маркировки *</label>
+                <input type="text" id="code" name="code"
+                       placeholder="Например: 04601751016416" required>
+                <small class="form-hint">Уникальный идентификатор для системы маркировки (GTIN)</small>
+            </div>
+        </div>
+
+        <div>
+            <div class="form-group">
+                <label for="product_1c">Код продукта 1С *</label>
+                <input type="text" id="product_1c" name="product_1c"
+                       placeholder="Например: 14099" required>
+                <small class="form-hint">Уникальный артикул из системы 1С</small>
+            </div>
+
+            <div class="form-group">
+                <label for="name">Название продукта *</label>
+                <input type="text" id="name" name="name"
+                       placeholder="Например: Молоко 3.2%, 1л" required>
+                <small class="form-hint">Полное наименование товара</small>
+            </div>
+
+            <div class="form-group">
+                <label for="zpl_code">ZPL-шаблон *</label>
+                <textarea id="zpl_code" name="zpl_code" rows="8" required
+                          placeholder="^XA
+^CI28
+^PW800
+^LL600
+^FO50,50^A0N,30^FDПродукт: {name}^FS
+^FO50,100^A0N,30^FDПартия: {batch}^FS
+^FO50,150^A0N,30^FDКоробка №{box_number}^FS
+^XZ"></textarea>
+                <small class="form-hint">
+                    ZPL-код шаблона. Используйте переменные в фигурных скобках:
+                    <code>{name}</code>, <code>{batch}</code>, <code>{box_number}</code>,
+                    <code>{marking_date}</code>, <code>{expiration_date}</code>.
+                    Обязательно начинайте с <code>^XA</code> и заканчивайте <code>^XZ</code>.
+                </small>
+            </div>
+        </div>
+
+        <div class="form-actions">
+            <button type="submit" class="save-btn">Добавить шаблон</button>
+        </div>
+    </form>
+
+    <div id="formMessage" class="form-message"></div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/jsbarcode.all.js"></script>
+<script src="/static/js/qrcode.js"></script>
+<script src="/static/js/fetch_zpl_preview.js"></script>
+<script src="/static/js/interaction_with_zpl_code.js"></script>
+{% endblock %}

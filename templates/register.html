@@ -1,0 +1,179 @@
+<!-- templates/register.html -->
+{% extends "base.html" %}
+
+{% block title %}Регистрация{% endblock %}
+
+{% block header_title %}Регистрация{% endblock %}
+
+{% block subtitle %}
+<div class="subtitle">Создайте аккаунт для доступа к системе печати</div>
+{% endblock %}
+
+{% block back_link %}
+<a class="link-button" href="/"><- На главную</a>
+{% endblock %}
+
+{% block content %}
+<div class="auth-container">
+    <div class="auth-card">
+        <div class="auth-header">
+            <div class="auth-icon">📝</div>
+            <h2>Создать аккаунт</h2>
+            <p class="auth-subtitle">Заполните форму для регистрации в системе</p>
+        </div>
+
+        {% if error %}
+        <div class="alert error">
+            <span class="alert-icon">⚠️</span>
+            <span>{{ error }}</span>
+        </div>
+        {% endif %}
+
+        {% if success %}
+        <div class="alert success">
+            <span class="alert-icon"></span>
+            <span>{{ success }}</span>
+        </div>
+        {% endif %}
+
+        <form method="post" action="/register" class="auth-form" id="registerForm">
+            <div class="form-group">
+                <label for="login" class="form-label">
+                    <span class="label-icon">👤</span>
+                    Логин
+                </label>
+                <div class="input-wrapper">
+                    <input
+                            type="text"
+                            id="login"
+                            name="login"
+                            required
+                            class="form-input"
+                            placeholder="Введите ваш логин"
+                            autocomplete="login"
+                    >
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="email" class="form-label">
+                    <span class="label-icon">📧</span>
+                    Электронная почта
+                </label>
+                <div class="input-wrapper">
+                    <input
+                            type="email"
+                            id="email"
+                            name="email"
+                            required
+                            class="form-input"
+                            placeholder="Введите вашу почту"
+                            autocomplete="email"
+                    >
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="password" class="form-label">
+                    <span class="label-icon">🔒</span>
+                    Пароль
+                </label>
+                <div class="input-password">
+                    <div class="input-wrapper">
+                        <input
+                                type="password"
+                                id="password"
+                                name="password"
+                                required
+                                class="form-input"
+                                placeholder="Минимум 8 символов"
+                                autocomplete="new-password"
+                        >
+                        <button type="button" class="toggle-password" onclick="togglePassword('password')">
+                            👁️
+                        </button>
+                    </div>
+                </div>
+                <small class="form-hint">
+                    Пароль должен содержать минимум 8 символов, включая буквы и цифры
+                </small>
+            </div>
+            <div class="form-group">
+                <label for="confirm_password" class="form-label">
+                    <span class="label-icon">🔒</span>
+                    Подтвердите пароль
+                </label>
+                <div class="input-wrapper">
+                    <input
+                            type="password"
+                            id="confirm_password"
+                            name="confirm_password"
+                            required
+                            class="form-input"
+                            placeholder="Повторите пароль"
+                            autocomplete="new-password"
+                    >
+                    <button type="button" class="toggle-password" onclick="togglePassword('confirm_password')">
+                        👁️
+                    </button>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="role_id" class="form_label">
+                    <span class="label-icon">👥</span>
+                    Роль пользователя
+                </label>
+                <div class="input-wrapper">
+                    <select id="role_id" name="role_id" class="form-input" required>
+                        <option value="">Выберите роль</option>
+                        {% for role in roles %}
+                        <option value="{{ role.id }}">{{ role.name }} - {{ role.description }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" class="btn-submit" id="submitBtn">
+                    <span class="btn-text">Зарегистрироваться</span>
+                    <span class="btn-icon">+</span>
+                </button>
+            </div>
+
+            <div class="auth-footer">
+                <p>Уже есть аккаунт?
+                    <a href="/user_login" class="auth-link">Войти</a>
+                </p>
+            </div>
+        </form>
+    </div>
+
+    <div class="auth-info">
+        <div class="info-card">
+            <div class="flex-center-column">
+                <div class="info-icon">ℹ️</div>
+                <h3>Информация о ролях</h3>
+                <ul class="role-list">
+                    <li>
+                        <strong>👤 Администратор</strong>
+                        <p>Полный доступ ко всем функциям системы</p>
+                    </li>
+                    <li>
+                        <strong>✏️ Редактор</strong>
+                        <p>Управление принтерами и шаблонами</p>
+                    </li>
+                    <li>
+                        <strong>🖨️ Пользователь</strong>
+                        <p>Только печать этикеток</p>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/register.js"></script>
+<script src="/static/js/password.js"></script>
+{% endblock %}

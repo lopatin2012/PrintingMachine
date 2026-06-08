@@ -1,0 +1,50 @@
+<!-- templates/base.html -->
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Веб-печать{% endblock %}</title>
+    {% block css %}{% endblock %}
+    <link rel="stylesheet" href="/static/css/base.css">
+</head>
+<body>
+<div class="container">
+    <header>
+        <div class="header-content">
+            <div class="panel">
+                <h1>{% block header_title %}Производственная печать{% endblock %}</h1>
+                {% block subtitle %}{% endblock %}
+                {% block back_link %}{% endblock %}
+            </div>
+            <div class="auth-buttons">
+                <!-- Блок авторизации -->
+                {% if user %}
+                    <div class="auth-status
+                    {% if user.role.is_admin %}admin
+                    {% elif user.role.is_editor %}editor
+                    {% else %}user{% endif %}">
+                        <span class="role-indicator"></span>
+                        <span>{{ user.login }}</span>
+                        {% if user.role %}
+                            <span class="role-badge
+                            {% if user.role.is_admin %}admin
+                            {% elif user.role.is_editor %}editor
+                            {% else %}user{% endif %}">{{ user.role.name }}
+                            </span>
+                        {% endif %}
+                    </div>
+                <form method="post" action="/user_logout" style="display:inline;">
+                    <button type="submit" class="link-button auth-button danger">Выйти</button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+    </header>
+
+    {% block content %}{% endblock %}
+</div>
+
+{% block scripts %}{% endblock %}
+</body>
+</html>

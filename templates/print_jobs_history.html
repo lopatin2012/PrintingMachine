@@ -1,0 +1,250 @@
+<!-- templates/print_jobs_history.html -->
+{% extends "base.html" %}
+
+{% block title %}История печати{% endblock %}
+
+{% block css %}
+<link rel="stylesheet" href="/static/css/printing.css">
+<style>
+.pagination {
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin: 24px 0;
+    flex-wrap: wrap;
+}
+
+.pagination a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    background: #f1f3f5;
+    color: #495057;
+    text-decoration: none;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.pagination a:hover {
+    background: var(--primary);
+    color: white;
+}
+
+.pagination a.active {
+    background: var(--primary);
+    color: white;
+    font-weight: 600;
+}
+
+.pagination-ellipsis {
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #adb5bd;
+}
+
+.page-info {
+    text-align: center;
+    color: #6c757d;
+    margin-bottom: 16px;
+    font-size: 14px;
+}
+
+.history-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+    flex-wrap: wrap;
+    gap: 16px;
+}
+
+.history-title {
+    font-size: 28px;
+    color: var(--primary);
+    margin: 0;
+}
+
+.back-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--primary);
+    text-decoration: none;
+    font-weight: 600;
+    padding: 8px 16px;
+    border-radius: 8px;
+    background: rgba(74, 85, 162, 0.1);
+    transition: background 0.2s;
+}
+
+.back-link:hover {
+    background: rgba(74, 85, 162, 0.15);
+}
+
+/* Стили для таблицы истории */
+.history-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: white;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+}
+
+.history-table th,
+.history-table td {
+    padding: 14px 16px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+
+.history-table th {
+    background: #f8f9fa;
+    font-weight: 600;
+    color: #495057;
+    font-size: 15px;
+}
+
+.history-table td {
+    font-size: 14px;
+}
+
+.history-table tr:hover {
+    background-color: #f8f9fa;
+}
+
+.status-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.status-pending { background: #fff3cd; color: #856404; }
+.status-processing { background: #d1ecf1; color: #0c5460; }
+.status-completed { background: #d4edda; color: #155724; }
+.status-failed { background: #f8d7da; color: #721c24; }
+.status-cancelled { background: #e2e3e5; color: #383d41; }
+
+.product-name {
+    font-weight: 600;
+    color: var(--primary);
+    max-width: 250px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.no-jobs {
+    text-align: center;
+    padding: 60px 20px;
+    color: #6c757d;
+}
+
+.no-jobs-icon {
+    font-size: 64px;
+    margin-bottom: 20px;
+    color: var(--primary);
+}
+</style>
+{% endblock %}
+
+{% block header_title %}История печати{% endblock %}
+
+{% block subtitle %}
+<div class="subtitle">Полная история всех заданий на печать этикеток</div>
+{% endblock %}
+
+{% block back_link %}
+<a class="link-button" href="/printing">← К печати</a>
+{% endblock %}
+
+{% block content %}
+<div class="printing-container">
+    <div class="history-header">
+        <h1 class="history-title">📋 История печати</h1>
+        <a href="/printing" class="back-link">← Вернуться к печати</a>
+    </div>
+
+    <div class="page-info">
+        Показано {{ (page - 1) * page_size + 1 }}–{{ (page - 1) * page_size + jobs|length }}
+        из {{ total_count }} заданий
+    </div>
+
+    {% if jobs %}
+    <div class="table-container">
+        <table class="history-table">
+            <thead>
+                <tr>
+                    <th>Дата и время</th>
+                    <th>Продукт</th>
+                    <th>Партия</th>
+                    <th>Коробки</th>
+                    <th>Статус</th>
+                    <th>Напечатано</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for job in jobs %}
+                <tr>
+                    <td>{{ job.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+                    <td class="product-name">{{ job.product.name if job.product else 'Неизвестно' }}</td>
+                    <td>{{ job.batch_number }}</td>
+                    <td>{{ job.first_box }}–{{ job.last_box }} ({{ job.boxes_count }})</td>
+                    <td><span class="status-badge status-{{ job.status }}">{{ job.status|capitalize }}</span></td>
+                    <td>
+                        {% if job.status == 'completed' %}
+                        ✅ {{ job.boxes_count }}/{{ job.boxes_count }}
+                        {% elif job.status == 'processing' %}
+                        ⚙️ {{ job.printed_count }}/{{ job.boxes_count }}
+                        {% elif job.status == 'failed' %}
+                        ❌ {{ job.printed_count }}/{{ job.boxes_count }}
+                        {% else %}
+                        —
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Пагинация -->
+    {% if total_pages > 1 %}
+    <div class="pagination">
+        {% if page > 1 %}
+        <a href="/printing/history?page={{ page - 1 }}">←</a>
+        {% endif %}
+
+        {% for p in range(1, total_pages + 1) %}
+            {% if p == 1 or p == total_pages or (p >= page - 2 and p <= page + 2) %}
+                <a href="/printing/history?page={{ p }}" class="{% if p == page %}active{% endif %}">{{ p }}</a>
+            {% elif p == 2 and page > 4 %}
+                <span class="pagination-ellipsis">...</span>
+            {% elif p == total_pages - 1 and page < total_pages - 3 %}
+                <span class="pagination-ellipsis">...</span>
+            {% endif %}
+        {% endfor %}
+
+        {% if page < total_pages %}
+        <a href="/printing/history?page={{ page + 1 }}">→</a>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% else %}
+    <div class="no-jobs">
+        <div class="no-jobs-icon">🖨️</div>
+        <h3>История пуста</h3>
+        <p>У вас пока нет заданий на печать. Запустите печать этикеток, чтобы увидеть историю.</p>
+        <a href="/printing" class="btn-submit" style="margin-top: 24px;">🖨️ Перейти к печати</a>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

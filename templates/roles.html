@@ -1,0 +1,350 @@
+<!-- templates/roles.html -->
+{% extends "base.html" %}
+
+{% block title %}Управление ролями{% endblock %}
+
+{% block css %}
+<link rel="stylesheet" href="/static/css/roles.css">
+{% endblock %}
+
+{% block header_title %}Управление ролями{% endblock %}
+
+{% block subtitle %}
+<div class="subtitle">Управление правами доступа пользователей</div>
+{% endblock %}
+
+{% block back_link %}
+<a class="link-button" href="/">← На главную</a>
+{% endblock %}
+
+{% block content %}
+<div class="roles-container">
+    <!-- Меню управления ролями -->
+    <div class="page-header">
+        <h2>👥 Список ролей</h2>
+        {% if user and user.role and user.role.is_admin %}
+        <button id="addRoleBtn" class="action-button primary">
+            <span class="button-icon">➕</span>
+            <span class="button-text">Добавить роль</span>
+        </button>
+        {% endif %}
+    </div>
+
+    <!-- Уведомления -->
+    {% if success %}
+    <div class="alert success">
+        <span class="alert-icon">✓</span>
+        <span>{{ success }}</span>
+    </div>
+    {% endif %}
+
+    {% if error %}
+    <div class="alert error">
+        <span class="alert-icon">⚠️</span>
+        <span>{{ error }}</span>
+    </div>
+    {% endif %}
+
+    <!-- Таблица ролей -->
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+            <tr>
+                <th>№</th>
+                <th>Наименование</th>
+                <th>Пользователи</th>
+                <th>Описание</th>
+                <th>Права</th>
+                <th>Дата создания</th>
+                {% if user and user.role and user.role.is_admin %}
+                <th>Действия</th>
+                {% endif %}
+            </tr>
+            </thead>
+            <tbody>
+            {% if roles %}
+            {% for role in roles %}
+            <tr>
+                <td>{{ loop.index }}</td>
+                <td>
+                    <strong class="role-name {{ role.name|lower }}">
+                        {{ role.name }}
+                    </strong>
+                </td>
+                <td>{{ role.description or '—' }}</td>
+                <td>
+                    <div class="role-permissions">
+                        {% if role.is_admin %}
+                        <span class="permission-badge admin">Администратор</span>
+                        {% endif %}
+                        {% if role.is_editor %}
+                        <span class="permission-badge editor">Редактор</span>
+                        {% endif %}
+                        {% if not role.is_admin and not role.is_editor %}
+                        <span class="permission-badge user">Пользователь</span>
+                        {% endif %}
+                    </div>
+                </td>
+                <td>{{ role.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+                {% if user and user.role and user.role.is_admin %}
+                <td class="actions-cell">
+                    <button class="table-btn edit-btn"
+                            onclick='editRole({{ role.id|string|tojson|safe }}, {{ role.name|tojson|safe }}, {{ role.description|tojson|safe if role.description else "null"|tojson|safe }}, {{ role.is_admin|tojson }}, {{ role.is_editor|tojson }})'>
+                        ✏️ Редактировать
+                    </button>
+                    {% if role.name|lower not in ['admin', 'editor', 'user'] %}
+                    <button class="table-btn delete-btn"
+                            onclick='deleteRole({{ role.id|string|tojson|safe }}, {{ role.name|tojson|safe }})'>
+                        🗑️ Удалить
+                    </button>
+                    {% endif %}
+                </td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+            {% else %}
+            <tr>
+                <td colspan="6" class="empty-row">👥 Нет ролей</td>
+            </tr>
+            {% endif %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Форма добавления/редактирования -->
+    <div id="roleFormModal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="formTitle">➕ Добавить роль</h3>
+                <button class="close-btn" onclick="closeRoleForm()">&times;</button>
+            </div>
+
+            <form id="roleForm" method="post" action="/roles">
+                <input type="hidden" id="roleId" name="id">
+
+                <div class="form-group">
+                    <label for="roleName" class="form-label">
+                        <span class="label-icon">🏷️</span>
+                        Наименование роли
+                    </label>
+                    <div class="input-wrapper">
+                        <input
+                                type="text"
+                                id="roleName"
+                                name="name"
+                                required
+                                class="form-input"
+                                placeholder="Введите название роли (например: Супервайзер)"
+                                maxlength="50"
+                        >
+                    </div>
+                    <small class="form-hint">Уникальное название роли, максимум 50 символов</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="roleDescription" class="form-label">
+                        <span class="label-icon">📝</span>
+                        Описание
+                    </label>
+                    <div class="input-wrapper">
+                        <textarea
+                                id="roleDescription"
+                                name="description"
+                                class="form-input"
+                                placeholder="Краткое описание прав и обязанностей"
+                                maxlength="200"
+                        ></textarea>
+                    </div>
+                    <small class="form-hint">Необязательное поле, максимум 200 символов</small>
+                </div>
+
+                <div class="form-group role-flags">
+                    <label class="form-label">
+                        <span class="label-icon">🔑</span>
+                        Права доступа
+                    </label>
+
+                    <div class="checkbox-group">
+                        <label class="checkbox-label">
+                            <input
+                                    type="checkbox"
+                                    id="isAdmin"
+                                    name="is_admin"
+                            >
+                            <span class="checkbox-custom"></span>
+                            <span class="checkbox-text">Администратор (полный доступ)</span>
+                        </label>
+
+                        <label class="checkbox-label">
+                            <input
+                                    type="checkbox"
+                                    id="isEditor"
+                                    name="is_editor"
+                            >
+                            <span class="checkbox-custom"></span>
+                            <span class="checkbox-text">Редактор (управление принтерами и шаблонами)</span>
+                        </label>
+
+                        <div class="role-warning hidden" id="roleWarning">
+                            ⚠️ Роль без прав будет иметь доступ только к печати этикеток
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="btn-secondary" onclick="closeRoleForm()">Отмена</button>
+                    <button type="submit" class="btn-submit" id="formSubmitBtn">
+                        <span class="btn-text" id="formSubmitText">Добавить роль</span>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Открыть форму добавления
+    function openAddRoleForm() {
+        document.getElementById('formTitle').textContent = '➕ Добавить роль';
+        document.getElementById('formSubmitText').textContent = 'Добавить роль';
+        document.getElementById('roleForm').action = '/roles';
+        document.getElementById('roleId').value = '';
+        document.getElementById('roleName').value = '';
+        document.getElementById('roleDescription').value = '';
+        document.getElementById('isAdmin').checked = false;
+        document.getElementById('isEditor').checked = false;
+        document.getElementById('roleFormModal').classList.remove('hidden');
+        updateRoleWarning();
+    }
+
+    // Открыть форму редактирования
+    function editRole(id, name, description, isAdmin, isEditor) {
+        document.getElementById('formTitle').textContent = '✏️ Редактировать роль';
+        document.getElementById('formSubmitText').textContent = 'Сохранить изменения';
+        document.getElementById('roleForm').action = `/roles/${id}`;
+        document.getElementById('roleId').value = id;
+        document.getElementById('roleName').value = name.trim();
+        document.getElementById('roleDescription').value = description && description !== 'null' ? description.trim() : '';
+        document.getElementById('isAdmin').checked = isAdmin;
+        document.getElementById('isEditor').checked = isEditor;
+        document.getElementById('roleFormModal').classList.remove('hidden');
+        document.getElementById('roleName').focus();
+        updateRoleWarning();
+    }
+
+    // Закрыть форму
+    function closeRoleForm() {
+        document.getElementById('roleFormModal').classList.add('hidden');
+        resetFormButton();
+    }
+
+    // Удалить роль
+    function deleteRole(id, name) {
+        if (name.toLowerCase() === 'admin' || name.toLowerCase() === 'user') {
+            alert('Системные роли (Администратор, Пользователь) нельзя удалить!');
+            return;
+        }
+
+        if (confirm(`Вы уверены, что хотите удалить роль "${name}"?\n\n⚠️ Внимание: Все пользователи с этой ролью будут переведены на роль "Пользователь"!`)) {
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = `/roles/${id}/delete`;
+            document.body.appendChild(form);
+            form.submit();
+        }
+    }
+
+    // Обновить предупреждение о правах
+    function updateRoleWarning() {
+        const isAdmin = document.getElementById('isAdmin').checked;
+        const isEditor = document.getElementById('isEditor').checked;
+        const warning = document.getElementById('roleWarning');
+
+        if (!isAdmin && !isEditor) {
+            warning.classList.remove('hidden');
+        } else {
+            warning.classList.add('hidden');
+        }
+    }
+
+    // Сброс кнопки формы
+    function resetFormButton() {
+        const submitBtn = document.getElementById('formSubmitBtn');
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<span class="btn-text" id="formSubmitText">Добавить роль</span>';
+    }
+
+    // Инициализация после загрузки DOM
+    document.addEventListener('DOMContentLoaded', function() {
+        // Кнопка добавления роли
+        const addBtn = document.getElementById('addRoleBtn');
+        if (addBtn) {
+            addBtn.addEventListener('click', openAddRoleForm);
+        }
+
+        // Обработчики чекбоксов
+        const isAdmin = document.getElementById('isAdmin');
+        const isEditor = document.getElementById('isEditor');
+
+        if (isAdmin && isEditor) {
+            isAdmin.addEventListener('change', updateRoleWarning);
+            isEditor.addEventListener('change', updateRoleWarning);
+        }
+
+        // Закрытие модального окна при клике вне его
+        const modal = document.getElementById('roleFormModal');
+        if (modal) {
+            modal.addEventListener('click', function(event) {
+                if (event.target === modal) {
+                    closeRoleForm();
+                }
+            });
+        }
+
+        // Валидация формы
+        const form = document.getElementById('roleForm');
+        if (form) {
+            form.addEventListener('submit', function(e) {
+                const name = document.getElementById('roleName').value.trim();
+
+                if (name.length < 2) {
+                    e.preventDefault();
+                    alert('Название роли должно содержать минимум 2 символа');
+                    document.getElementById('roleName').focus();
+                    return false;
+                }
+
+                if (name.length > 50) {
+                    e.preventDefault();
+                    alert('Название роли не должно превышать 50 символов');
+                    document.getElementById('roleName').focus();
+                    return false;
+                }
+
+                // Проверка на системные имена (защита от конфликта)
+                const lowerName = name.toLowerCase();
+                if (lowerName === 'admin' || lowerName === 'user' || lowerName === 'editor') {
+                    e.preventDefault();
+                    alert('Нельзя использовать системные имена ролей (админ, пользователь, редактор)');
+                    document.getElementById('roleName').focus();
+                    return false;
+                }
+
+                // Показать состояние загрузки
+                const submitBtn = document.getElementById('formSubmitBtn');
+                submitBtn.disabled = true;
+                submitBtn.innerHTML = '<span class="btn-text">Сохранение...</span><span class="btn-spinner"></span>';
+            });
+        }
+
+        // Обработка нажатия клавиши Escape
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                closeRoleForm();
+            }
+        });
+    });
+</script>
+{% endblock %}
