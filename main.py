@@ -5,8 +5,6 @@ import os
 from datetime import datetime
 from contextlib import asynccontextmanager
 
-
-
 from fastapi import FastAPI, Request, status, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
