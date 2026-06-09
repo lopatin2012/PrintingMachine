@@ -5,10 +5,12 @@ import socket
 from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID
-from typing import Optional, Callable, AsyncGenerator
+from typing import Callable, AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from helpers.printers import (
+    check_printer_status, replace_cyrillic_in_zpl, substitute_placeholders, send_zpl_safely)
 from models import PrintJob
 
 logger = logging.getLogger(__name__)
@@ -29,33 +31,40 @@ class PrintTask:
     retries: int = 0
     max_retries: int = 3
     created_at: datetime = field(default_factory=datetime.now)
+    printed_count: int = field(default=0, init=False, repr=False)
 
 
 class PrinterQueue:
     """Асинхронная очередь печати с обработкой пауз и повторами."""
 
-    def __init__(self, db_getter: Callable[[], AsyncGenerator[AsyncSession, None]],
-                 max_concurrent_printers: int = 1):
+    def __init__(
+        self,
+        db_getter: Callable[[], AsyncGenerator[AsyncSession, None]],
+        max_concurrent_printers: int = 1,
+    ):
         self.db_getter = db_getter
         self.queue: asyncio.Queue[PrintTask] = asyncio.Queue()
         self._workers: list[asyncio.Task] = []
         self._running = False
         self._max_concurrent = max_concurrent_printers
-        # Реестр активных заданий для отмены: job_id → PrintTask
         self._active_tasks: dict[str, PrintTask] = {}
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
 
     async def start(self):
         if self._running:
             return
         self._running = True
         for i in range(self._max_concurrent):
-            task = asyncio.create_task(self._worker(f"printer-worker-{i}"))
-            self._workers.append(task)
-        logger.info(f"Запущено {len(self._workers)} воркеров очереди печати")
+            worker_task = asyncio.create_task(self._worker(f"printer-worker-{i}"))
+            self._workers.append(worker_task)
+        logger.info("Запущено %d воркеров очереди печати", len(self._workers))
 
     async def stop(self):
         self._running = False
-        await self.queue.join()
+
         for w in self._workers:
             w.cancel()
         await asyncio.gather(*self._workers, return_exceptions=True)
@@ -65,79 +74,105 @@ class PrinterQueue:
     async def enqueue(self, task: PrintTask):
         self._active_tasks[str(task.job_id)] = task
         await self.queue.put(task)
-        logger.info(f"Задание {task.job_id} добавлено в очередь (размер: {self.queue.qsize()})")
+        logger.info(
+            "Задание %s добавлено в очередь (размер: %d)",
+            task.job_id, self.queue.qsize(),
+        )
 
     def cancel_task(self, job_id: UUID) -> bool:
-        """Отметить задание как отменённое (проверяется в _process_task)."""
-        job_id_str = str(job_id)
-        task = self._active_tasks.get(job_id_str)
+        """Пометить задание как отменённое и сбросить очередь принтера."""
+        task = self._active_tasks.get(str(job_id))
         if task:
-            task.max_retries = -1  # Флаг отмены: любая ошибка прервёт выполнение
-            logger.info(f"Задание {job_id_str} помечено как отменённое")
+            task.max_retries = -1  # флаг отмены
+            self._cancel_printer_queue(task.printer_ip, task.printer_port)
+            logger.info("Задание %s помечено как отменённое", job_id)
             return True
         return False
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _cancel_printer_queue(self, printer_ip: str, printer_port: int) -> bool:
+        """Отправить ~JA на принтер — сброс всех заданий в его очереди."""
+        try:
+            with socket.create_connection((printer_ip, printer_port), timeout=5) as sock:
+                sock.sendall(b'~JA')
+            logger.info("~JA отправлен на принтер %s:%d", printer_ip, printer_port)
+            return True
+        except OSError as e:
+            logger.warning("Не удалось отправить ~JA на %s:%d: %s", printer_ip, printer_port, e)
+            return False
+
+    def _is_cancelled(self, task: PrintTask) -> bool:
+        return task.max_retries < 0
+
+    async def _get_db(self) -> tuple[AsyncSession, any]:
+        gen = self.db_getter()
+        db: AsyncSession = await gen.__anext__()
+        return db, gen
+
+    @staticmethod
+    async def _close_db(db: AsyncSession, gen):
+        await db.close()
+        await gen.aclose()
+
+    # ------------------------------------------------------------------
+    # Worker loop
+    # ------------------------------------------------------------------
 
     async def _worker(self, name: str):
-        from helpers.printers import check_printer_status
-
         while self._running or not self.queue.empty():
             try:
                 task = await asyncio.wait_for(self.queue.get(), timeout=1.0)
             except asyncio.TimeoutError:
                 continue
 
+            db, gen = None, None
             try:
-                # Получаем сессию БД
-                db_gen = self.db_getter()
-                db: AsyncSession = await db_gen.__anext__()
-
+                db, gen = await self._get_db()
                 await self._process_task(task, db)
-
-                await db.close()
-                await db_gen.aclose()
-                self.queue.task_done()
-
             except asyncio.CancelledError:
                 self.queue.put_nowait(task)
                 raise
             except Exception as e:
-                logger.exception(f"Ошибка в воркере {name} при обработке {task.job_id}: {e}")
-                if task.retries < task.max_retries and task.max_retries >= 0:
+                logger.exception("Ошибка в воркере %s при обработке %s: %s", name, task.job_id, e)
+                if task.retries < task.max_retries and not self._is_cancelled(task):
                     task.retries += 1
                     task.created_at = datetime.now()
                     await self.queue.put(task)
-                    logger.warning(f"Задание {task.job_id} возвращено в очередь (попытка {task.retries})")
+                    logger.warning(
+                        "Задание %s возвращено в очередь (попытка %d)",
+                        task.job_id, task.retries,
+                    )
                 else:
-                    # Финальная ошибка — обновляем статус в БД
-                    await self._mark_job_failed(task.job_id, str(e))
-                self.queue.task_done()
+                    await self._mark_job_failed(task.job_id, str(e), task.printed_count)
             finally:
-                # Удаляем из активных, если задание завершено
-                if task.job_id in self._active_tasks:
-                    del self._active_tasks[str(task.job_id)]
+                if db is not None:
+                    await self._close_db(db, gen)
+                self._active_tasks.pop(str(task.job_id), None)
+                self.queue.task_done()
+
+    # ------------------------------------------------------------------
+    # Core task processing
+    # ------------------------------------------------------------------
 
     async def _process_task(self, task: PrintTask, db: AsyncSession):
-        from helpers.printers import check_printer_status
-        from helpers.printers import substitute_placeholders, replace_cyrillic_in_zpl, send_zpl_safely
-        from models import PrintJob
-
         job_id_str = str(task.job_id)
         printer_addr = f"{task.printer_ip}:{task.printer_port}"
 
-        # Обновляем статус в БД
         job = await db.get(PrintJob, task.job_id)
         if not job:
-            logger.error(f"Задание {job_id_str} не найдено в БД")
+            logger.error("Задание %s не найдено в БД", job_id_str)
             return
+
         job.status = 'processing'
-        job.printed_count = 0
+        job.printed_count = task.printed_count
         await db.commit()
 
         prepared_code = replace_cyrillic_in_zpl(task.zpl_code)
 
         for attempt in range(task.max_retries + 1):
-            # Проверяем флаг отмены
-            if task.max_retries < 0:
+            if self._is_cancelled(task):
                 await self._mark_job_cancelled(task.job_id, db)
                 return
 
@@ -145,99 +180,113 @@ class PrinterQueue:
 
             if not status.get('ok'):
                 wait = 2 ** attempt
-                logger.warning(f"Принтер {printer_addr} недоступен, ожидание {wait}с...")
+                logger.warning("Принтер %s недоступен, ожидание %dс...", printer_addr, wait)
                 await asyncio.sleep(wait)
                 continue
 
             if status.get('paused'):
-                logger.info(f"Принтер {printer_addr} на паузе, ожидание снятия...")
-                for _ in range(7200):  # ~4 часа
-                    if task.max_retries < 0:  # Проверка отмены внутри ожидания
-                        await self._mark_job_cancelled(task.job_id, db)
-                        return
-                    await asyncio.sleep(2.0)
-                    status = check_printer_status(task.printer_ip, task.printer_port, timeout=1.0)
-                    if status.get('ok') and not status.get('paused'):
-                        break
-                else:
-                    raise TimeoutError(f"Принтер {printer_addr} не вышел из паузы за 4 часа")
+                await self._wait_for_unpause(task, db, printer_addr)
+                if self._is_cancelled(task):
+                    return
 
-            # Принтер готов — печать
             try:
-                with socket.create_connection((task.printer_ip, task.printer_port), timeout=10) as sock:
-                    for i in range(task.boxes_count):
-                        # Проверка отмены перед каждой этикеткой
-                        if task.max_retries < 0:
-                            await self._mark_job_cancelled(task.job_id, db)
-                            return
-
-                        # Проверка паузы
-                        status = check_printer_status(task.printer_ip, task.printer_port, timeout=1.0)
-                        if status.get('paused'):
-                            raise ConnectionError("Принтер перешёл в паузу во время печати")
-
-                        current_box = task.first_box + i
-                        box_zpl = substitute_placeholders(
-                            prepared_code,
-                            batch_number=task.batch_number,
-                            marking_date=task.marking_date,
-                            expiration_date=task.expiration_date,
-                            current_box=current_box,
-                            gtin=task.gtin
-                        )
-
-                        send_zpl_safely(sock, box_zpl.encode('utf-8'))
-
-                        # Обновление прогресса
-                        job = await db.get(PrintJob, task.job_id)
-                        if job:
-                            job.printed_count = i + 1
-                            await db.commit()
-
-                        await asyncio.sleep(0.1)
-
-                # Успех!
-                job = await db.get(PrintJob, task.job_id)
-                if job:
-                    job.status = 'completed'
-                    job.completed_at = datetime.utcnow()
-                    job.printed_count = task.boxes_count
-                    await db.commit()
-                logger.info(f"Задание {job_id_str} успешно завершено")
-                return  # ← Ключевой return! Не даём выполниться коду ниже
+                await self._print_boxes(task, db, prepared_code, task.printed_count, printer_addr)
+                return
 
             except (socket.timeout, OSError, ConnectionError) as e:
-                logger.warning(f"Ошибка сети при печати {job_id_str}: {e}")
-                if attempt < task.max_retries and task.max_retries >= 0:
+                logger.warning("Ошибка сети при печати %s: %s", job_id_str, e)
+                if attempt < task.max_retries and not self._is_cancelled(task):
                     wait = 2 ** attempt
-                    logger.info(f"Повторная попытка через {wait}с...")
+                    logger.info("Повторная попытка через %dс...", wait)
                     await asyncio.sleep(wait)
                 else:
                     raise
 
-         # Если цикл завершился без return — все попытки исчерпаны
-        raise RuntimeError(f"Не удалось выполнить задание {job_id_str} после {task.max_retries + 1} попыток")
+        raise RuntimeError(
+            f"Не удалось выполнить задание {job_id_str} после {task.max_retries + 1} попыток"
+        )
 
-    async def _mark_job_failed(self, job_id: UUID, error: str):
-        """Вспомогательный метод: пометить задание как failed."""
+    async def _wait_for_unpause(self, task: PrintTask, db: AsyncSession, printer_addr: str):
+        """Ждать снятия паузы (до 4 часов)."""
+        logger.info("Принтер %s на паузе, ожидание снятия...", printer_addr)
+        for _ in range(7200):
+            if self._is_cancelled(task):
+                await self._mark_job_cancelled(task.job_id, db)
+                return
+            await asyncio.sleep(2.0)
+            status = check_printer_status(task.printer_ip, task.printer_port, timeout=1.0)
+            if status.get('ok') and not status.get('paused'):
+                logger.info("Принтер %s возобновил работу", printer_addr)
+                return
+        raise TimeoutError(f"Принтер {printer_addr} не вышел из паузы за 4 часа")
+
+    async def _print_boxes(
+        self,
+        task: PrintTask,
+        db: AsyncSession,
+        prepared_code: str,
+        start_index: int,
+        printer_addr: str,
+    ):
+        """Отправить ящики на принтер, начиная с start_index."""
+        with socket.create_connection((task.printer_ip, task.printer_port), timeout=10) as sock:
+            for i in range(start_index, task.boxes_count):
+                if self._is_cancelled(task):
+                    await self._mark_job_cancelled(task.job_id, db)
+                    return
+
+                status = check_printer_status(task.printer_ip, task.printer_port, timeout=1.0)
+                if status.get('paused'):
+                    raise ConnectionError("Принтер перешёл в паузу во время печати")
+
+                current_box = task.first_box + i
+                box_zpl = substitute_placeholders(
+                    prepared_code,
+                    batch_number=task.batch_number,
+                    marking_date=task.marking_date,
+                    expiration_date=task.expiration_date,
+                    current_box=current_box,
+                    gtin=task.gtin,
+                )
+                send_zpl_safely(sock, box_zpl.encode('utf-8'))
+
+                task.printed_count = i + 1
+                job = await db.get(PrintJob, task.job_id)
+                if job:
+                    job.printed_count = task.printed_count
+                    await db.commit()
+
+                await asyncio.sleep(0.1)
+
+        job = await db.get(PrintJob, task.job_id)
+        if job:
+            job.status = 'completed'
+            job.completed_at = datetime.now()
+            job.printed_count = task.boxes_count
+            await db.commit()
+        logger.info("Задание %s успешно завершено", task.job_id)
+
+    # ------------------------------------------------------------------
+    # DB status helpers
+    # ------------------------------------------------------------------
+
+    async def _mark_job_failed(self, job_id: UUID, error: str, printed_count: int = 0):
         try:
-            db_gen = self.db_getter()
-            db = await db_gen.__anext__()
+            db, gen = await self._get_db()
             job = await db.get(PrintJob, job_id)
             if job:
                 job.status = 'failed'
                 job.error_message = error[:500]
+                job.printed_count = printed_count
                 await db.commit()
-            await db.close()
-            await db_gen.aclose()
+            await self._close_db(db, gen)
         except Exception as e:
-            logger.error(f"Не удалось обновить статус задания {job_id}: {e}")
+            logger.error("Не удалось обновить статус задания %s: %s", job_id, e)
 
     async def _mark_job_cancelled(self, job_id: UUID, db: AsyncSession):
-        """Пометить задание как cancelled."""
         job = await db.get(PrintJob, job_id)
         if job:
             job.status = 'cancelled'
             job.error_message = 'Остановлено оператором'
             await db.commit()
-        logger.info(f"Задание {job_id} отменено")
+        logger.info("Задание %s отменено", job_id)
