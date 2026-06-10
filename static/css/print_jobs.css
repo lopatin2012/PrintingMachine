@@ -509,6 +509,24 @@
 }
 .preview-hint .hint-icon { font-size: 18px; }
 
+/* ── Минимум для отображения принтеров ──────────────────────────────────────────────────── */
+.printer-select-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.printer-select-meta {
+    font-size: 12px;
+    color: var(--color-warning, #e65100);
+    min-height: 16px;
+}
+
+#printerSelect:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
 /* ── Задания на печать ──────────────────────────────────────────────────── */
 .section-title {
     font-size: 22px; color: var(--primary); margin-bottom: 20px;
@@ -534,7 +552,7 @@
     box-shadow: 0 3px 10px rgba(0,0,0,.07);
     border-left: 4px solid var(--primary);
     transition: transform .2s;
-    overflow: hidden;  /* ИСПРАВЛЕНО: защита от переполнения */
+    overflow: hidden;  /* защита от переполнения */
 }
 .compact-job-card:hover { transform: translateX(4px); box-shadow: 0 5px 15px rgba(0,0,0,.1); }
 .compact-job-main {
@@ -554,7 +572,7 @@
 .compact-job-status.failed     { background: rgba(220,53,69,.15);  color: var(--pj-red); }
 .compact-job-status.cancelled  { background: rgba(108,117,125,.15);color: #495057; }
 
-/* ИСПРАВЛЕНО: Название продукта в карточках заданий - многострочное с обрезкой */
+/* Название продукта в карточках заданий - многострочное с обрезкой */
 .compact-job-product {
     font-weight: 600;
     color: var(--primary);
@@ -614,7 +632,7 @@
     background: white; border-radius: 14px; padding: 18px;
     box-shadow: 0 3px 10px rgba(0,0,0,.08);
     border-left: 4px solid var(--pj-muted);
-    overflow: hidden;  /* ИСПРАВЛЕНО: защита от переполнения */
+    overflow: hidden;  /* защита от переполнения */
 }
 .admin-job-header {
     display: flex; justify-content: space-between; align-items: center;
@@ -627,7 +645,7 @@
     gap: 14px; font-size: 15px;
 }
 
-/* ИСПРАВЛЕНО: Название продукта в админ-карточках */
+/* Название продукта в админ-карточках */
 .admin-job-product,
 .admin-job-printer,
 .admin-job-batch,

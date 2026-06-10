@@ -147,6 +147,17 @@
                             </div>
                         </div>
 
+                        <div class="form-group" id="printerSelectGroup">
+                        <label for="printerSelect" class="form-label">Принтер</label>
+                        <div class="printer-select-wrapper">
+                            <select id="printerSelect" name="printer_id" required class="form-input">
+                                <option value="" disabled selected>— загрузка принтеров... —</option>
+                            </select>
+                            <div class="printer-select-meta" id="printerSelectMeta"></div>
+                        </div>
+                        <small class="form-hint">Принтеры вашего цеха с активным шаблоном для этого продукта</small>
+                    </div>
+
                         <div class="printer-info-section">
                             <div class="printer-info-card">
                                 <div class="printer-info-icon">🖨️</div>
@@ -370,18 +381,142 @@
     function selectProduct(productId, productName, productGtin, expirationDays) {
         document.getElementById('selectedProductId').value = productId;
         document.getElementById('selectedGtin').value = productGtin;
-        document.getElementById('selectedProductName').textContent = productName;
         document.getElementById('expirationDays').value = expirationDays;
         productExpirationDays = expirationDays;
         document.getElementById('printFormContainer').classList.remove('hidden');
         calculateExpirationDate();
-        loadTemplatePreview(productId);
 
         const selectedProductName = document.getElementById('selectedProductName');
         if (selectedProductName) {
             selectedProductName.textContent = productName;
             updateElementTooltip(selectedProductName, productName);
         }
+
+        // Сбрасываем select пока грузим
+        const sel = document.getElementById('printerSelect');
+        if (sel) {
+            sel.innerHTML = '<option value="" disabled selected>— загрузка... —</option>';
+            sel.disabled = true;
+        }
+
+        // Загружаем принтеры и шаблон параллельно,
+        // затем выбираем принтер из шаблона
+        Promise.all([
+            fetch(`/api/printing/printers?product_id=${productId}`)
+                .then(r => r.ok ? r.json() : Promise.reject(r.status)),
+            fetch(`/api/printing/template/${productId}`)
+                .then(r => r.ok ? r.json() : Promise.reject(r.status)),
+        ]).then(([printersData, templateData]) => {
+            const defaultPrinterId = templateData?.template?.printer_id ?? null;
+            loadPrinters(printersData.printers || [], defaultPrinterId);
+            applyTemplateData(templateData);
+        }).catch(err => {
+            console.error('Ошибка загрузки данных формы:', err);
+            if (sel) {
+                sel.innerHTML = '<option value="" disabled selected>Ошибка загрузки</option>';
+            }
+        });
+    }
+
+    // ─── ЗАГРУЗКА ПРИНТЕРОВ ───────────────────────────────────────────────────────
+
+    function applyTemplateData(data) {
+        const previewContainer  = document.getElementById('templatePreviewContainer');
+        let previewPlaceholder  = document.getElementById('previewPlaceholder');
+
+        if (!previewPlaceholder) {
+            previewPlaceholder = document.createElement('div');
+            previewPlaceholder.id = 'previewPlaceholder';
+            previewPlaceholder.className = 'preview-placeholder';
+        }
+
+        previewPlaceholder.innerHTML = `<div class="preview-spinner"></div><p>Загрузка предпросмотра...</p>`;
+        previewContainer.innerHTML = '';
+        previewContainer.appendChild(previewPlaceholder);
+
+        if (data.template) {
+            const el = id => document.getElementById(id);
+
+            if (el('templateInfoName')) {
+                const name = data.template.name || '—';
+                el('templateInfoName').textContent = name;
+                updateElementTooltip(el('templateInfoName'), name);
+            }
+            if (el('templateInfoType')) {
+                const code = data.template.print_code || '';
+                if      (code.startsWith('^XA'))  { el('templateInfoType').textContent = 'ZPL (Zebra)';   el('templateInfoType').style.color = '#3d478a'; }
+                else if (code.startsWith('SIZE')) { el('templateInfoType').textContent = 'TSPL (TSC)';    el('templateInfoType').style.color = '#2e7d32'; }
+                else                              { el('templateInfoType').textContent = 'Другой формат'; el('templateInfoType').style.color = '#6c757d'; }
+            }
+
+            currentZplCode    = data.template.print_code;
+            currentTemplateId = data.template.id;
+
+            renderPreview({ useLiveData: false });
+        } else {
+            previewPlaceholder.innerHTML = `<div style="font-size:48px">⚠️</div><p>Нет активного шаблона</p><small>Обратитесь к администратору</small>`;
+            previewContainer.innerHTML = '';
+            previewContainer.appendChild(previewPlaceholder);
+            const nameEl = document.getElementById('templateInfoName');
+            if (nameEl) nameEl.textContent = 'Нет активного шаблона';
+            currentZplCode    = null;
+            currentTemplateId = null;
+        }
+    }
+
+    // Вызывается при выборе принтера — синхронизируем блок «Принтер» в форме
+    function onPrinterSelected(printer) {
+        const nameEl = document.getElementById('printerInfoName');
+        const ipEl   = document.getElementById('printerInfoIp');
+        if (nameEl) { nameEl.textContent = printer.name; updateElementTooltip(nameEl, printer.name); }
+        if (ipEl)   ipEl.textContent = `${printer.ip_address}:${printer.port_address}`;
+    }
+
+    function loadPrinters(printers, defaultPrinterId = null) {
+        const select = document.getElementById('printerSelect');
+        const meta   = document.getElementById('printerSelectMeta');
+        if (!select) return;
+
+        select.innerHTML = '';
+
+        if (printers.length === 0) {
+            select.innerHTML = '<option value="" disabled selected>Нет доступных принтеров</option>';
+            if (meta) meta.textContent = 'В вашем цехе нет принтеров';
+            select.disabled = true;
+            return;
+        }
+
+        // Плейсхолдер только если принтеров несколько и нет дефолтного
+        if (printers.length > 1 && !defaultPrinterId) {
+            const ph = document.createElement('option');
+            ph.value = ''; ph.disabled = true; ph.selected = true;
+            ph.textContent = '— выберите принтер —';
+            select.appendChild(ph);
+        }
+
+        printers.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.id;
+            opt.textContent = `${p.name}  (${p.line_name})`;
+            opt.dataset.ip   = `${p.ip_address}:${p.port_address}`;
+            opt.dataset.name = p.name;
+            select.appendChild(opt);
+        });
+
+        // Выбираем принтер из шаблона, либо единственный доступный
+        const toSelect = defaultPrinterId ?? (printers.length === 1 ? printers[0].id : null);
+        if (toSelect) {
+            select.value = toSelect;
+            const chosen = printers.find(p => p.id === toSelect);
+            if (chosen) onPrinterSelected(chosen);
+        }
+
+        select.disabled = false;
+
+        select.onchange = () => {
+            const chosen = printers.find(p => p.id === select.value);
+            if (chosen) onPrinterSelected(chosen);
+        };
     }
 
     // ─── ЗАГРУЗКА ШАБЛОНА ────────────────────────────────────────────────────────
@@ -415,8 +550,6 @@
                 if (data.template) {
                     const el = id => document.getElementById(id);
 
-                    if (el('printerInfoName'))  el('printerInfoName').textContent  = data.template.printer_name || '—';
-                    if (el('printerInfoIp'))    el('printerInfoIp').textContent    = data.template.printer_ip   || '';
                     if (el('templateInfoName')) el('templateInfoName').textContent = data.template.name          || '—';
                     if (el('templateInfoType')) {
                         const code = data.template.print_code || '';

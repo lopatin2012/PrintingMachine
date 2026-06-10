@@ -259,7 +259,13 @@ async def printing_page(
     )
     products = (await db.execute(products_query)).scalars().all()
 
-    user_jobs = await print_job_crud.get_user_jobs(db, current_user.id, limit=15)
+    # Если пользователь админ, то отображать все задания, иначе только пользователя.
+    is_admin = current_user.role.is_admin
+    user_jobs = await (
+        print_job_crud.get_all_user_jobs(db)
+        if is_admin else
+        print_job_crud.get_user_jobs(db, current_user.id, limit=15)
+    )
 
     return templates.TemplateResponse(
         'print_jobs.html',
@@ -280,6 +286,7 @@ async def printing_page(
 async def start_printing(
         request: Request,
         product_id: UUID = Form(...),
+        printer_id: UUID = Form(...),
         batch_number: str = Form(...),
         marking_date: date = Form(...),
         first_box: int = Form(...),
@@ -296,6 +303,7 @@ async def start_printing(
     if not product:
         raise HTTPException(status_code=404, detail="Продукт не найден")
 
+    # Проверяем доступ пользователя к запрошенному принтеру
     workshop_access = await db.execute(
         select(WorkshopUser).where(
             WorkshopUser.user_id == current_user.id,
@@ -309,31 +317,52 @@ async def start_printing(
     workshop_ids = [wu.workshop_id for wu in user_workshops]
     line_ids = [wu.line_id for wu in user_workshops if wu.line_id]
 
-    printer_query = select(Printer).join(Line, Printer.line_id == Line.id)
-    if line_ids:
-        printer_query = printer_query.where(Line.id.in_(line_ids))
-    else:
-        printer_query = printer_query.where(Line.workshop_id.in_(workshop_ids))
-    available_printers = (await db.execute(printer_query)).scalars().all()
-    printer_ids = [p.id for p in available_printers]
+    # Проверяем, есть ли у пользователя доступ «Все цеха»
+    from models import Workshop
+    workshops_result = await db.execute(
+        select(Workshop).where(Workshop.id.in_(workshop_ids))
+    )
+    workshops = workshops_result.scalars().all()
+    has_all_workshops = any(w.name == 'Все цеха' for w in workshops)
 
+    # Проверяем, что выбранный принтер доступен пользователю
+    printer_access_query = (
+        select(Printer)
+        .join(Line, Printer.line_id == Line.id)
+        .where(Printer.id == printer_id)
+    )
+    if not has_all_workshops:
+        if line_ids:
+            printer_access_query = printer_access_query.where(Line.id.in_(line_ids))
+        else:
+            printer_access_query = printer_access_query.where(Line.workshop_id.in_(workshop_ids))
+
+    printer = (await db.execute(printer_access_query)).scalar_one_or_none()
+    if not printer:
+        raise HTTPException(status_code=403, detail="Принтер недоступен или не найден")
+
+    # Ищем шаблон для выбранного принтера и продукта.
     template = (await db.execute(
         select(CodeTemplate).where(
             CodeTemplate.product_id == product_id,
-            CodeTemplate.printer_id.in_(printer_ids),
+            CodeTemplate.printer_id == printer_id,
             CodeTemplate.is_active == True
         )
     )).scalar_one_or_none()
 
     if not template:
+        template = (await db.execute(
+            select(CodeTemplate).where(
+                CodeTemplate.product_id == product_id,
+                CodeTemplate.is_active == True
+            ).order_by(CodeTemplate.created_at.desc())
+        )).scalar_one_or_none()
+
+    if not template:
         raise HTTPException(
             status_code=400,
-            detail=f"Нет активного шаблона печати для продукта '{product.name}'"
+            detail=f"Нет активного шаблона для продукта '{product.name}'"
         )
-
-    printer = await printer_crud.get(db, template.printer_id)
-    if not printer:
-        raise HTTPException(status_code=404, detail="Принтер не найден")
 
     expiration_date = marking_date + timedelta(days=product.date_expiration)
     boxes_count = last_box - first_box + 1
@@ -341,7 +370,7 @@ async def start_printing(
     print_job_data = PrintJobCreate(
         user_id=current_user.id,
         product_id=product_id,
-        printer_id=template.printer_id,
+        printer_id=printer_id,
         template_id=template.id,
         batch_number=batch_number.strip(),
         marking_date=marking_date,
@@ -354,7 +383,6 @@ async def start_printing(
     print_job = await print_job_crud.create(db, print_job_data)
     await db.commit()
 
-    # Создаём задачу для очереди
     print_task = PrintTask(
         job_id=print_job.id,
         zpl_code=template.print_code,
@@ -371,13 +399,10 @@ async def start_printing(
 
     printer_queue = request.app.state.printer_queue
 
-    # Добавляем в очередь
     if printer_queue:
         await printer_queue.enqueue(print_task)
         status_msg = f"Задание добавлено в очередь печати (принтер: {printer.name})"
-
     else:
-        # Fallback: прямой запуск, если очередь не инициализирована
         job_id_str = str(print_job.id)
         task = asyncio.create_task(
             _start_printing(
@@ -467,7 +492,13 @@ async def get_user_print_jobs(
             "jobs": []
         }
 
-    jobs = await print_job_crud.get_user_jobs(db, current_user.id, limit=20)
+    is_admin = current_user.role.is_admin
+    jobs = await (
+        print_job_crud.get_all_user_jobs(db)
+        if is_admin else
+        print_job_crud.get_user_jobs(db, current_user.id, limit=20)
+    )
+
     return {
         "jobs": [
             {
@@ -604,6 +635,7 @@ async def get_active_template_for_product(
         "template": {
             "id": str(template.id),
             "name": template.name,
+            "printer_id": str(template.printer_id),
             "printer_name": template.printer.name if template.printer else "Неизвестный принтер",
             "printer_ip": (
                 f"{template.printer.ip_address}:{template.printer.port_address}"
@@ -611,6 +643,60 @@ async def get_active_template_for_product(
             ),
             "print_code": template.print_code,
         }
+    }
+
+@router.get('/api/printing/printers')
+async def get_available_printers(
+        product_id: UUID,
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_user)
+):
+    workshop_access = await db.execute(
+        select(WorkshopUser).where(
+            WorkshopUser.user_id == current_user.id,
+            WorkshopUser.is_active == True
+        )
+    )
+    user_workshops = workshop_access.scalars().all()
+    if not user_workshops:
+        raise HTTPException(status_code=403, detail="Нет доступа к цехам")
+
+    from models import Workshop
+    workshop_ids = [wu.workshop_id for wu in user_workshops]
+    line_ids = [wu.line_id for wu in user_workshops if wu.line_id]
+
+    workshops_result = await db.execute(
+        select(Workshop).where(Workshop.id.in_(workshop_ids))
+    )
+    workshops = workshops_result.scalars().all()
+    has_all_workshops = any(w.name == 'Все цеха' for w in workshops)
+
+    from sqlalchemy.orm import selectinload as sload
+    printer_query = (
+        select(Printer)
+        .options(sload(Printer.line))
+        .join(Line, Printer.line_id == Line.id)
+    )
+
+    if not has_all_workshops:
+        if line_ids:
+            printer_query = printer_query.where(Line.id.in_(line_ids))
+        else:
+            printer_query = printer_query.where(Line.workshop_id.in_(workshop_ids))
+
+    printers = (await db.execute(printer_query)).scalars().all()
+
+    return {
+        "printers": [
+            {
+                "id": str(p.id),
+                "name": p.name,
+                "ip_address": p.ip_address,
+                "port_address": p.port_address,
+                "line_name": p.line.name if p.line else "—",
+            }
+            for p in printers
+        ]
     }
 
 __all__ = ['router']

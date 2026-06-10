@@ -32,6 +32,21 @@ class PrintJobCRUD(BaseCRUD[PrintJob, PrintJobCreate, PrintJobUpdate]):
         result = await db.execute(query)
         return result.scalars().all()
 
+    async def get_all_user_jobs(
+            self,
+            db: AsyncSession,
+            limit: int = 50,
+            status_filter: str = None
+    ):
+        query = select(self.model)
+
+        if status_filter:
+            query = query.where(self.model.status == status_filter)
+
+        query = query.order_by(desc(self.model.created_at)).limit(limit)
+        result = await db.execute(query)
+        return result.scalars().all()
+
     async def get_active_jobs(self, db: AsyncSession, limit: int = 100):
         """Получить все активные задания (для админа)"""
         query = select(self.model).where(
