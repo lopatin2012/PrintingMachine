@@ -190,7 +190,7 @@ class PrinterQueue:
                     return
 
             try:
-                await self._print_boxes(task, db, prepared_code, task.printed_count, printer_addr)
+                await self._print_boxes(task, db, prepared_code, task.printed_count)
                 return
 
             except (socket.timeout, OSError, ConnectionError) as e:
@@ -226,10 +226,12 @@ class PrinterQueue:
         db: AsyncSession,
         prepared_code: str,
         start_index: int,
-        printer_addr: str,
     ):
         """Отправить ящики на принтер, начиная с start_index."""
         with socket.create_connection((task.printer_ip, task.printer_port), timeout=10) as sock:
+            # Очистка очереди перед отправкой новых кодов.
+            sock.sendall(b'~JA')
+
             for i in range(start_index, task.boxes_count):
                 if self._is_cancelled(task):
                     await self._mark_job_cancelled(task.job_id, db)
