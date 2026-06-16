@@ -154,7 +154,8 @@ def substitute_placeholders(
     zpl_code = zpl_code.replace('{expiration_date_str}', expiration_fmt)
 
     # ── Партия (человекочитаемая) ────────────────────────────────────────────
-    zpl_code = zpl_code.replace('{batch_number_str}', f'{batch_number}({marking_fmt})')
+    marking_batch_number = marking_date.strftime('%d%m%y')
+    zpl_code = zpl_code.replace('{batch_number_str}', f'{batch_number}({marking_batch_number})')
     zpl_code = zpl_code.replace('{batch_number}', batch_number)
 
     # ── Гарантируем закрытие этикетки ────────────────────────────────────────
