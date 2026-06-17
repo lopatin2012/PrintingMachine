@@ -271,7 +271,7 @@
 
 /* Срок годности */
 .expiration-display {
-    padding: 16px; background: #e8f5e9; border-radius: var(--pj-radius-md);
+    padding: 8px; background: #e8f5e9; border-radius: var(--pj-radius-md);
     text-align: center; font-size: 18px; font-weight: 600; color: var(--pj-green);
 }
 .expiration-display small { display: block; font-size: 13px; color: #666; margin-top: 4px; }

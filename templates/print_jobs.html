@@ -134,7 +134,7 @@
                                        min="1" class="form-input">
                             </div>
                             <div class="form-group box-count padding-top-10">
-                                <label class="form-label">Количество коробок</label>
+                                <label class="form-label">Коробок</label>
                                 <div class="box-count-display" id="boxCountDisplay">0</div>
                             </div>
                         </div>
@@ -144,6 +144,15 @@
                             <div class="expiration-display">
                                 <span id="expirationDateDisplay">—</span>
                                 <small>(рассчитан автоматически)</small>
+                            </div>
+                        </div>
+
+                        <div class="form-group" id="templateSelectGroup">
+                            <label for="templateSelect" class="form-label">📄 Шаблон печати</label>
+                            <div class="printer-select-wrapper">
+                                <select id="templateSelect" name="template_id" required class="form-input">
+                                    <option value="" disabled selected>— загрузка шаблонов... —</option>
+                                </select>
                             </div>
                         </div>
 
@@ -317,777 +326,728 @@
 
 {% block scripts %}
 <script>
-    let productExpirationDays = 0;
-    let updateInterval        = null;
-    let activeTooltip = null;      // DOM-элемент активного tooltip
-    let tooltipHideTimer = null;   // Таймер задержки скрытия
+let productExpirationDays = 0;
+let updateInterval        = null;
+let activeTooltip = null;      // DOM-элемент активного tooltip
+let tooltipHideTimer = null;   // Таймер задержки скрытия
 
 
-    // ZPL текущего шаблона — сохраняется при loadTemplatePreview
-    let currentZplCode    = null;
-    let currentTemplateId = null;
+// ZPL текущего шаблона — сохраняется при loadTemplatePreview
+let currentZplCode    = null;
+let currentTemplateId = null;
 
-    // ─── ПЕРЕМЕННЫЕ ДЛЯ УПРАВЛЕНИЯ ПРЕДПРОСМОТРОМ ────────────────────────────────
-    let previewRotation = 0;          // Текущий угол поворота (градусы)
-    let previewImageUrl = null;       // URL текущего изображения предпросмотра
+// ─── ПЕРЕМЕННЫЕ ДЛЯ УПРАВЛЕНИЯ ПРЕДПРОСМОТРОМ ────────────────────────────────
+let previewRotation = 0;          // Текущий угол поворота (градусы)
+let previewImageUrl = null;       // URL текущего изображения предпросмотра
 
-    // ─── ПРИМЕНЕНИЕ ПОВОРОТА ─────────────────────────────────────────────────────
-    function applyPreviewRotation() {
-        const previewImg = document.querySelector('#templatePreviewContainer img.preview-image');
-        if (!previewImg) {
-            console.warn('Изображение предпросмотра не найдено');
-            return;
+// ─── ПРИМЕНЕНИЕ ПОВОРОТА ─────────────────────────────────────────────────────
+function applyPreviewRotation() {
+    const previewImg = document.querySelector('#templatePreviewContainer img.preview-image');
+    if (!previewImg) {
+        console.warn('Изображение предпросмотра не найдено');
+        return;
+    }
+
+    // Нормализуем угол (0-360)
+    const normalizedRotation = ((previewRotation % 360) + 360) % 360;
+
+    // Масштабируем изображение при повороте на 90° или 270°
+    // чтобы оно влезало в контейнер
+    let scale = 1;
+    if (normalizedRotation === 90 || normalizedRotation === 270) {
+        scale = 0.7;  // Уменьшаем на 30% для портретной ориентации
+    }
+
+    previewImg.style.transform = `rotate(${previewRotation}deg) scale(${scale})`;
+    previewImg.style.transition = 'transform 0.3s ease';
+}
+
+// ─── ПОИСК ───────────────────────────────────────────────────────────────────
+
+function setupSearchFilter() {
+    const searchInput = document.getElementById('productSearch');
+    const clearBtn    = document.getElementById('clearSearch');
+    if (searchInput) {
+        searchInput.addEventListener('input', () => filterProducts(searchInput.value.toLowerCase().trim()));
+        searchInput.addEventListener('keyup', e => { if (e.key === 'Escape') { searchInput.value = ''; filterProducts(''); } });
+    }
+    if (clearBtn) clearBtn.addEventListener('click', () => { document.getElementById('productSearch').value = ''; filterProducts(''); });
+}
+
+function filterProducts(searchTerm) {
+    let visible = 0;
+    document.querySelectorAll('.product-card').forEach(card => {
+        const match = !searchTerm || (card.dataset.search || '').includes(searchTerm);
+        card.style.display = match ? 'block' : 'none';
+        if (match) visible++;
+    });
+    const emptyState = document.querySelector('.empty-state');
+    if (emptyState) emptyState.style.display = visible === 0 ? 'block' : 'none';
+}
+
+// ─── ВЫБОР ПРОДУКТА ──────────────────────────────────────────────────────────
+
+function selectProduct(productId, productName, productGtin, expirationDays) {
+    document.getElementById('selectedProductId').value = productId;
+    document.getElementById('selectedGtin').value = productGtin;
+    document.getElementById('expirationDays').value = expirationDays;
+    productExpirationDays = expirationDays;
+    document.getElementById('printFormContainer').classList.remove('hidden');
+    calculateExpirationDate();
+
+    const selectedProductName = document.getElementById('selectedProductName');
+    if (selectedProductName) {
+        selectedProductName.textContent = productName;
+        updateElementTooltip(selectedProductName, productName);
+    }
+
+    // Сбрасываем список принтеров пока грузим
+    const sel = document.getElementById('printerSelect');
+    if (sel) {
+        sel.innerHTML = '<option value="" disabled selected>— загрузка... —</option>';
+        sel.disabled = true;
+    }
+
+    // Сбрасываем список шаблонов пока грузим
+    const templateSel = document.getElementById('templateSelect');
+    if (templateSel) {
+        templateSel.innerHTML = '<option value="" disabled selected>— загрузка шаблонов... —</option>';
+        templateSel.disabled = true;
+    }
+
+    // Загружаем принтеры и шаблоны параллельно
+    Promise.all([
+        fetch(`/api/printing/printers?product_id=${productId}`).then(r => r.ok ? r.json() : Promise.reject(r.status)),
+        fetch(`/api/printing/templates?product_id=${productId}`).then(r => r.ok ? r.json() : Promise.reject(r.status)),
+    ]).then(([printersData, templatesData]) => {
+        loadPrinters(printersData.printers || [], null);
+        loadTemplates(templatesData.templates || []);
+    }).catch(err => {
+        console.error('Ошибка загрузки данных формы:', err);
+    });
+}
+
+// ─── ЗАГРУЗКА ШАБЛОНОВ И ПРИНТЕРОВ ───────────────────────────────────────────────────────
+function loadTemplates(templates) {
+    const select = document.getElementById('templateSelect');
+    if (!select) return;
+
+    select.innerHTML = '';
+    if (!templates || templates.length === 0) {
+        select.innerHTML = '<option value="" disabled selected>Нет доступных шаблонов</option>';
+        select.disabled = true;
+        currentZplCode = null;
+        return;
+    }
+
+    templates.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t.id;
+
+        // Сокращаем название шаблона до 20 символов.
+        let displayName = t.name;
+        if (displayName.length > 20) {
+            displayName = displayName.substring(0, 20) + '...';
         }
 
-        // Нормализуем угол (0-360)
-        const normalizedRotation = ((previewRotation % 360) + 360) % 360;
-
-        // Масштабируем изображение при повороте на 90° или 270°
-        // чтобы оно влезало в контейнер
-        let scale = 1;
-        if (normalizedRotation === 90 || normalizedRotation === 270) {
-            scale = 0.7;  // Уменьшаем на 30% для портретной ориентации
-        }
-
-        previewImg.style.transform = `rotate(${previewRotation}deg) scale(${scale})`;
-        previewImg.style.transition = 'transform 0.3s ease';
-    }
-
-    // ─── ПОИСК ───────────────────────────────────────────────────────────────────
-
-    function setupSearchFilter() {
-        const searchInput = document.getElementById('productSearch');
-        const clearBtn    = document.getElementById('clearSearch');
-        if (searchInput) {
-            searchInput.addEventListener('input', () => filterProducts(searchInput.value.toLowerCase().trim()));
-            searchInput.addEventListener('keyup', e => { if (e.key === 'Escape') { searchInput.value = ''; filterProducts(''); } });
-        }
-        if (clearBtn) clearBtn.addEventListener('click', () => { document.getElementById('productSearch').value = ''; filterProducts(''); });
-    }
-
-    function filterProducts(searchTerm) {
-        let visible = 0;
-        document.querySelectorAll('.product-card').forEach(card => {
-            const match = !searchTerm || (card.dataset.search || '').includes(searchTerm);
-            card.style.display = match ? 'block' : 'none';
-            if (match) visible++;
-        });
-        const emptyState = document.querySelector('.empty-state');
-        if (emptyState) emptyState.style.display = visible === 0 ? 'block' : 'none';
-    }
-
-    // ─── ВЫБОР ПРОДУКТА ──────────────────────────────────────────────────────────
-
-    function selectProduct(productId, productName, productGtin, expirationDays) {
-        document.getElementById('selectedProductId').value = productId;
-        document.getElementById('selectedGtin').value = productGtin;
-        document.getElementById('expirationDays').value = expirationDays;
-        productExpirationDays = expirationDays;
-        document.getElementById('printFormContainer').classList.remove('hidden');
-        calculateExpirationDate();
-
-        const selectedProductName = document.getElementById('selectedProductName');
-        if (selectedProductName) {
-            selectedProductName.textContent = productName;
-            updateElementTooltip(selectedProductName, productName);
-        }
-
-        // Сбрасываем select пока грузим
-        const sel = document.getElementById('printerSelect');
-        if (sel) {
-            sel.innerHTML = '<option value="" disabled selected>— загрузка... —</option>';
-            sel.disabled = true;
-        }
-
-        // Загружаем принтеры и шаблон параллельно,
-        // затем выбираем принтер из шаблона
-        Promise.all([
-            fetch(`/api/printing/printers?product_id=${productId}`)
-                .then(r => r.ok ? r.json() : Promise.reject(r.status)),
-            fetch(`/api/printing/template/${productId}`)
-                .then(r => r.ok ? r.json() : Promise.reject(r.status)),
-        ]).then(([printersData, templateData]) => {
-            const defaultPrinterId = templateData?.template?.printer_id ?? null;
-            loadPrinters(printersData.printers || [], defaultPrinterId);
-            applyTemplateData(templateData);
-        }).catch(err => {
-            console.error('Ошибка загрузки данных формы:', err);
-            if (sel) {
-                sel.innerHTML = '<option value="" disabled selected>Ошибка загрузки</option>';
-            }
-        });
-    }
-
-    // ─── ЗАГРУЗКА ПРИНТЕРОВ ───────────────────────────────────────────────────────
-
-    function applyTemplateData(data) {
-        const previewContainer  = document.getElementById('templatePreviewContainer');
-        let previewPlaceholder  = document.getElementById('previewPlaceholder');
-
-        if (!previewPlaceholder) {
-            previewPlaceholder = document.createElement('div');
-            previewPlaceholder.id = 'previewPlaceholder';
-            previewPlaceholder.className = 'preview-placeholder';
-        }
-
-        previewPlaceholder.innerHTML = `<div class="preview-spinner"></div><p>Загрузка предпросмотра...</p>`;
-        previewContainer.innerHTML = '';
-        previewContainer.appendChild(previewPlaceholder);
-
-        if (data.template) {
-            const el = id => document.getElementById(id);
-
-            if (el('templateInfoName')) {
-                const name = data.template.name || '—';
-                el('templateInfoName').textContent = name;
-                updateElementTooltip(el('templateInfoName'), name);
-            }
-            if (el('templateInfoType')) {
-                const code = data.template.print_code || '';
-                if      (code.startsWith('^XA'))  { el('templateInfoType').textContent = 'ZPL (Zebra)';   el('templateInfoType').style.color = '#3d478a'; }
-                else if (code.startsWith('SIZE')) { el('templateInfoType').textContent = 'TSPL (TSC)';    el('templateInfoType').style.color = '#2e7d32'; }
-                else                              { el('templateInfoType').textContent = 'Другой формат'; el('templateInfoType').style.color = '#6c757d'; }
-            }
-
-            currentZplCode    = data.template.print_code;
-            currentTemplateId = data.template.id;
-
-            renderPreview({ useLiveData: false });
-        } else {
-            previewPlaceholder.innerHTML = `<div style="font-size:48px">⚠️</div><p>Нет активного шаблона</p><small>Обратитесь к администратору</small>`;
-            previewContainer.innerHTML = '';
-            previewContainer.appendChild(previewPlaceholder);
-            const nameEl = document.getElementById('templateInfoName');
-            if (nameEl) nameEl.textContent = 'Нет активного шаблона';
-            currentZplCode    = null;
-            currentTemplateId = null;
-        }
-    }
-
-    // Вызывается при выборе принтера — синхронизируем блок «Принтер» в форме
-    function onPrinterSelected(printer) {
-        const nameEl = document.getElementById('printerInfoName');
-        const ipEl   = document.getElementById('printerInfoIp');
-        if (nameEl) { nameEl.textContent = printer.name; updateElementTooltip(nameEl, printer.name); }
-        if (ipEl)   ipEl.textContent = `${printer.ip_address}:${printer.port_address}`;
-    }
-
-    function loadPrinters(printers, defaultPrinterId = null) {
-        const select = document.getElementById('printerSelect');
-        const meta   = document.getElementById('printerSelectMeta');
-        if (!select) return;
-
-        select.innerHTML = '';
-
-        if (printers.length === 0) {
-            select.innerHTML = '<option value="" disabled selected>Нет доступных принтеров</option>';
-            if (meta) meta.textContent = 'В вашем цехе нет принтеров';
-            select.disabled = true;
-            return;
-        }
-
-        // Плейсхолдер только если принтеров несколько и нет дефолтного
-        if (printers.length > 1 && !defaultPrinterId) {
-            const ph = document.createElement('option');
-            ph.value = ''; ph.disabled = true; ph.selected = true;
-            ph.textContent = '— выберите принтер —';
-            select.appendChild(ph);
-        }
-
-        printers.forEach(p => {
-            const opt = document.createElement('option');
-            opt.value = p.id;
-            opt.textContent = `${p.name}  (${p.line_name})`;
-            opt.dataset.ip   = `${p.ip_address}:${p.port_address}`;
-            opt.dataset.name = p.name;
-            select.appendChild(opt);
-        });
-
-        // Выбираем принтер из шаблона, либо единственный доступный
-        const toSelect = defaultPrinterId ?? (printers.length === 1 ? printers[0].id : null);
-        if (toSelect) {
-            select.value = toSelect;
-            const chosen = printers.find(p => p.id === toSelect);
-            if (chosen) onPrinterSelected(chosen);
-        }
-
-        select.disabled = false;
-
-        select.onchange = () => {
-            const chosen = printers.find(p => p.id === select.value);
-            if (chosen) onPrinterSelected(chosen);
-        };
-    }
-
-    // ─── ЗАГРУЗКА ШАБЛОНА ────────────────────────────────────────────────────────
-
-    function loadTemplatePreview(productId) {
-        const previewContainer = document.getElementById('templatePreviewContainer');
-
-        // Создаём placeholder единожды
-        let previewPlaceholder = document.getElementById('previewPlaceholder');
-        if (!previewPlaceholder) {
-            previewPlaceholder = document.createElement('div');
-            previewPlaceholder.id = 'previewPlaceholder';
-            previewPlaceholder.className = 'preview-placeholder';
-            previewContainer.appendChild(previewPlaceholder);
-        }
-
-        previewPlaceholder.innerHTML = `<div class="preview-spinner"></div><p>Загрузка предпросмотра...</p>`;
-
-        ['printerInfoName','printerInfoIp','templateInfoName','templateInfoType'].forEach(id => {
-            const el = document.getElementById(id);
-            if (el) el.textContent = id.includes('Name') ? 'Загрузка...' : '';
-        });
-
-        previewPlaceholder.innerHTML = `<div class="preview-spinner"></div><p>Загрузка предпросмотра...</p>`;
-        previewContainer.innerHTML = '';
-        previewContainer.appendChild(previewPlaceholder);
-
-        fetch(`/api/printing/template/${productId}`)
-            .then(r => { if (!r.ok) throw new Error(`Ошибка ${r.status}`); return r.json(); })
-            .then(data => {
-                if (data.template) {
-                    const el = id => document.getElementById(id);
-
-                    if (el('templateInfoName')) el('templateInfoName').textContent = data.template.name          || '—';
-                    if (el('templateInfoType')) {
-                        const code = data.template.print_code || '';
-                        if      (code.startsWith('^XA'))  { el('templateInfoType').textContent = 'ZPL (Zebra)';   el('templateInfoType').style.color = '#3d478a'; }
-                        else if (code.startsWith('SIZE')) { el('templateInfoType').textContent = 'TSPL (TSC)';    el('templateInfoType').style.color = '#2e7d32'; }
-                        else                              { el('templateInfoType').textContent = 'Другой формат'; el('templateInfoType').style.color = '#6c757d'; }
-                    }
-
-                    // Обновляем текст и tooltip
-                    if (el('printerInfoName')) {
-                        const name = data.template.printer_name || '—';
-                        el('printerInfoName').textContent = name;
-                        updateElementTooltip(el('printerInfoName'), name);
-                    }
-
-                    if (el('templateInfoName')) {
-                        const name = data.template.name || '—';
-                        el('templateInfoName').textContent = name;
-                        updateElementTooltip(el('templateInfoName'), name);
-                    }
-
-                    // Сохраняем ZPL для повторных рендеров
-                    currentZplCode    = data.template.print_code;
-                    currentTemplateId = data.template.id;
-
-                    // Первый рендер — тестовые данные
-                    renderPreview({ useLiveData: false });
-                } else {
-                    previewPlaceholder.innerHTML = `<div style="font-size:48px">⚠️</div><p>Нет активного шаблона</p><small>Обратитесь к администратору</small>`;
-                    previewContainer.innerHTML = '';
-                    previewContainer.appendChild(previewPlaceholder);
-                    document.getElementById('printerInfoName').textContent  = '—';
-                    document.getElementById('templateInfoName').textContent = 'Нет активного шаблона';
-                    currentZplCode    = null;
-                    currentTemplateId = null;
-                }
-            })
-            .catch(err => {
-                previewPlaceholder.innerHTML = `<div style="font-size:48px">❌</div><p>Ошибка загрузки</p><small>${err.message}</small>`;
-                previewContainer.innerHTML = '';
-                previewContainer.appendChild(previewPlaceholder);
-            });
-
-
-    }
-
-    // ─── ЕДИНЫЙ РЕНДЕР ПРЕДПРОСМОТРА ─────────────────────────────────────────────
-    // useLiveData = false  → тестовые данные
-    // useLiveData = true   → данные из полей формы (пустые поля → тестовые значения)
-
-    function renderPreview({ useLiveData = false } = {}) {
-        if (!currentZplCode) return;
-
-        const previewContainer = document.getElementById('templatePreviewContainer');
-        if (!previewContainer) {
-            console.warn('Контейнер предпросмотра не найден');
-            return;
-        }
-
-        // Создаём placeholder если он не существует
-        let previewPlaceholder = document.getElementById('previewPlaceholder');
-        if (!previewPlaceholder) {
-            previewPlaceholder = document.createElement('div');
-            previewPlaceholder.id = 'previewPlaceholder';
-            previewPlaceholder.className = 'preview-placeholder';
-        }
-
-        const badge = document.getElementById('previewSourceBadge');
-        const hintText = document.getElementById('previewHintText');
-        const btn = document.getElementById('btnRefreshPreview');
-        const spinner = document.getElementById('refreshSpinner');
-
-        // gtin для печати и отображения.
-        const gtin = document.getElementById('selectedGtin')?.value.trim();
-
-        // Обновляем плейсхолдер
-        previewPlaceholder.innerHTML = `<div class="preview-spinner"></div><p>Генерация предпросмотра...</p>`;
-        previewContainer.innerHTML = '';
-        previewContainer.appendChild(previewPlaceholder);
-
-        // Безопасно обновляем состояние кнопки и спиннера
-        if (btn) btn.disabled = true;
-        if (spinner) spinner.classList.remove('hidden');
-
-        // ── Вспомогательные форматы ───────────────────────────────────────────────
-        const today    = new Date();
-        const nextWeek = new Date(today);
-        nextWeek.setDate(today.getDate() + 7);
-
-        // Date → DDMMYY
-        const dateToDDMMYY = d =>
-            String(d.getDate()).padStart(2,'0') +
-            String(d.getMonth()+1).padStart(2,'0') +
-            String(d.getFullYear()).slice(-2);
-
-        // YYYY-MM-DD (из input[type=date]) → DDMMYY
-        const isoToDDMMYY = iso => {
-            if (!iso) return null;
-            const [y, m, d] = iso.split('-');
-            return `${d}${m}${y.slice(-2)}`;
-        };
-
-        // ── Параметры рендера ─────────────────────────────────────────────────────
-        let batch    = '01';
-        let markDate = dateToDDMMYY(today);
-        let expDate  = dateToDDMMYY(nextWeek);
-        let firstBox = '1';
-        let isLive   = false;
-
-        if (useLiveData) {
-            const batchVal    = document.getElementById('batchNumber')?.value.trim();
-            const dateVal     = document.getElementById('markingDate')?.value;  // YYYY-MM-DD
-            const firstBoxVal = document.getElementById('firstBox')?.value;
-
-            // Рассчитываем дату годности из дата + дней хранения
-            let expComputed = null;
-            if (dateVal && productExpirationDays) {
-                const md  = new Date(dateVal);
-                const exp = new Date(md);
-                exp.setDate(exp.getDate() + productExpirationDays);
-                expComputed = dateToDDMMYY(exp);
-            }
-
-            if (batchVal)   { batch    = batchVal;             isLive = true; }
-            if (dateVal)    { markDate = isoToDDMMYY(dateVal); isLive = true; }
-            if (expComputed){ expDate  = expComputed;          isLive = true; }
-            if (firstBoxVal && parseInt(firstBoxVal) > 0) { firstBox = firstBoxVal; isLive = true; }
-        }
-
-        // ── Бейдж источника данных ────────────────────────────────────────────────
-        if (badge) {
-            badge.textContent = isLive ? '✅ данные формы' : '🧪 тестовые данные';
-            badge.className   = 'preview-source-badge' + (isLive ? ' live' : '');
-        }
-
-        if (hintText) {
-            hintText.textContent = isLive
-                ? `Предпросмотр с данными формы — коробка №${firstBox}`
-                : 'Автоматически — тестовые данные. Нажмите «Обновить» для предпросмотра с реальными данными.';
-        }
-
-        // ── Запрос к бэкенду ─────────────────────────────────────────────────────
-        fetch('/templates/preview/render', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({
-                zpl_code:        currentZplCode,
-                batch_number:    batch,
-                marking_date:    markDate,
-                expiration_date: expDate,
-                first_box:       firstBox,
-                current_box:     firstBox,
-                gtin:            gtin,
-            })
-        })
-        .then(r => {
-            if (!r.ok) throw new Error(`Ошибка рендеринга: ${r.status}`);
-            return r.blob();
-        })
-        .then(blob => {
-            // Проверяем, что контейнер все еще существует
-            if (!previewContainer) return;
-
-            // Освобождаем предыдущий URL
-            if (window.currentPreviewUrl) {
-                URL.revokeObjectURL(window.currentPreviewUrl);
-            }
-
-            const imageUrl = URL.createObjectURL(blob);
-            previewContainer.innerHTML = `<img src="${imageUrl}" class="preview-image" alt="Предпросмотр" data-template-id="${currentTemplateId}" title="Кликните для увеличения">`;
-
-            // Сохраняем URL для скачивания
-            window.currentPreviewUrl = imageUrl;
-            previewImageUrl = imageUrl;
-
-            // Сбрасываем поворот и масштаб при новом рендере
-            previewRotation = 0;
-            applyPreviewRotation();
-        })
-        .catch(err => {
-            console.error('Ошибка предпросмотра:', err);
-
-            // Проверяем, что плейсхолдер все еще существует
-            if (!previewPlaceholder || !previewContainer) return;
-
-            previewPlaceholder.innerHTML = `<div style="font-size:48px">🖼️</div><p>Предпросмотр недоступен</p><small>${err.message}</small>`;
-            previewContainer.innerHTML = '';
-            previewContainer.appendChild(previewPlaceholder);
-        })
-        .finally(() => {
-            // Безопасно восстанавливаем состояние кнопки и спиннера
-            if (btn) btn.disabled = false;
-            if (spinner) spinner.classList.add('hidden');
-        });
-    }
-
-    // Вызывается кнопкой «Обновить предпросмотр»
-    function refreshPreviewFromForm() {
-        if (!currentZplCode) {
-            alert('Сначала выберите продукт для печати');
-            return;
-        }
-
-        const previewContainer = document.getElementById('templatePreviewContainer');
-        if (!previewContainer) {
-            alert('Ошибка: контейнер предпросмотра не найден. Обновите страницу.');
-            return;
-        }
-
-        renderPreview({ useLiveData: true });
-    }
-
-    function closePrintForm() {
-        document.getElementById('printFormContainer').classList.add('hidden');
-        document.getElementById('printForm').reset();
-        document.getElementById('boxCountDisplay').textContent = '0';
-        document.getElementById('expirationDateDisplay').textContent = '—';
-        currentZplCode    = null;
-        currentTemplateId = null;
-    }
-
-    // ─── РАСЧЁТЫ ─────────────────────────────────────────────────────────────────
-
-    function setupBoxCountCalculation() {
-        const firstBox = document.getElementById('firstBox');
-        const lastBox  = document.getElementById('lastBox');
-        const display  = document.getElementById('boxCountDisplay');
-        const update = () => {
-            const f = parseInt(firstBox.value) || 0;
-            const l = parseInt(lastBox.value)  || 0;
-            display.textContent = (f > 0 && l >= f) ? String(l - f + 1) : '0';
-        };
-        firstBox.addEventListener('input', update);
-        lastBox.addEventListener('input', update);
-    }
-
-    function setupExpirationCalculation() {
-        document.getElementById('markingDate').addEventListener('change', calculateExpirationDate);
-    }
-
-    function calculateExpirationDate() {
-        const markingInput = document.getElementById('markingDate');
-        const display      = document.getElementById('expirationDateDisplay');
-        if (!markingInput.value || !productExpirationDays) { display.textContent = '—'; return; }
-        const exp = new Date(markingInput.value);
-        exp.setDate(exp.getDate() + productExpirationDays);
-        display.textContent = exp.toLocaleDateString('ru-RU', { year:'numeric', month:'long', day:'numeric' });
-    }
-
-    // ─── ВАЛИДАЦИЯ ФОРМЫ ─────────────────────────────────────────────────────────
-
-    function setupFormValidation() {
-        const form      = document.getElementById('printForm');
-        const submitBtn = document.getElementById('printSubmitBtn');
-        if (!form || !submitBtn) return;
-        form.addEventListener('submit', function (e) {
-            const firstBox    = parseInt(document.getElementById('firstBox').value)  || 0;
-            const lastBox     = parseInt(document.getElementById('lastBox').value)   || 0;
-            const batchNumber = document.getElementById('batchNumber').value.trim();
-            if (!batchNumber) { e.preventDefault(); alert('Введите номер партии'); document.getElementById('batchNumber').focus(); return; }
-            if (firstBox <= 0 || lastBox <= 0) { e.preventDefault(); alert('Номера коробок должны быть больше 0'); return; }
-            if (firstBox > lastBox) { e.preventDefault(); alert('Номер первой коробки не может быть больше номера последней'); return; }
-            submitBtn.disabled = true;
-            submitBtn.querySelector('.btn-text').textContent = 'Запуск печати...';
-            submitBtn.querySelector('.btn-spinner').classList.remove('hidden');
-        });
-    }
-
-    // ─── ОСТАНОВКА ЗАДАНИЯ ───────────────────────────────────────────────────────
-
-    async function stopPrintJob(jobId, btnEl) {
-        if (!confirm('Остановить печать? Текущая этикетка будет напечатана до конца.')) return;
-        btnEl.disabled = true;
-        btnEl.textContent = 'Остановка...';
-        try {
-            const resp = await fetch(`/api/printing/jobs/${jobId}/stop`, { method: 'POST' });
-            const data = await resp.json();
-            if (data.success) { btnEl.textContent = '⏸️ Остановлено'; btnEl.classList.add('btn-stopped'); }
-            else { alert(data.message || 'Не удалось остановить задание'); btnEl.disabled = false; btnEl.textContent = '⏹ Стоп'; }
-        } catch (err) {
-            alert('Ошибка при остановке: ' + err.message);
-            btnEl.disabled = false; btnEl.textContent = '⏹ Стоп';
-        }
-    }
-
-    // ─── АВТООБНОВЛЕНИЕ ЗАДАНИЙ ──────────────────────────────────────────────────
-
-    function startJobsUpdate() {
-        updateInterval = setInterval(updateUserJobs, 3000);
-        if (document.getElementById('adminJobsList')) { updateAdminJobs(); setInterval(updateAdminJobs, 5000); }
-    }
-
-    async function updateUserJobs() {
-        try {
-            const resp = await fetch('/api/printing/jobs/user');
-            if (!resp.ok) return;
-            updateJobsList('userJobsList', (await resp.json()).jobs);
-        } catch (e) { console.error('Ошибка обновления заданий:', e); }
-    }
-
-    async function updateAdminJobs() {
-        try {
-            const resp = await fetch('/api/printing/jobs/active');
-            if (!resp.ok) return;
-            updateAdminJobsList((await resp.json()).jobs);
-        } catch (e) { console.error('Ошибка обновления активных заданий:', e); }
-    }
-
-    function updateJobsList(containerId, jobs) {
-        const container = document.getElementById(containerId);
-        if (!container) return;
-        const limitedJobs = jobs.slice(0, 10);
-        const existingCards = new Map();
-        container.querySelectorAll('.compact-job-card').forEach(card => existingCards.set(card.dataset.jobId, card));
-        limitedJobs.forEach(job => {
-            let card = existingCards.get(job.id);
-            if (!card) {
-                card = document.createElement('div');
-                card.className = 'compact-job-card';
-                card.dataset.jobId = job.id;
-                container.insertBefore(card, container.firstChild);
-            }
-            updateJobCardContent(card, job);
-        });
-        container.querySelectorAll('.compact-job-card').forEach(card => {
-            if (!limitedJobs.some(j => j.id === card.dataset.jobId)) card.remove();
-        });
-    }
-
-    function updateJobCardContent(card, job) {
-        card.dataset.status = job.status;
-        let mainDiv = card.querySelector('.compact-job-main');
-        if (!mainDiv) { mainDiv = document.createElement('div'); mainDiv.className = 'compact-job-main'; card.appendChild(mainDiv); }
-
-        const emoji   = { pending:'⏳', processing:'⚙️', completed:'✅', failed:'❌', cancelled:'⏸️' };
-        const stopBtn = (job.status === 'pending' || job.status === 'processing')
-            ? `<button class="btn-stop-job" onclick="stopPrintJob('${job.id}', this)">⏹ Стоп</button>` : '';
-
-        mainDiv.innerHTML = `
-            <div class="compact-job-status ${job.status}">${emoji[job.status] || '?'}</div>
-            <div class="compact-job-info">
-                <div class="compact-job-product" data-tooltip="${job.product_name || 'Неизвестно'}">${job.product_name || 'Неизвестно'}</div>
-                <div class="compact-job-meta">
-                    <span class="compact-job-batch">Партия: ${job.batch_number || '—'}</span>
-                    <span class="compact-job-boxes">${job.first_box && job.last_box ? `${job.first_box}–${job.last_box}` : '—'} (${job.boxes_count})</span>
-                </div>
-            </div>
-            <div class="compact-job-time">${new Date(job.created_at).toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</div>
-            ${stopBtn}`;
-
-        // Активируем tooltip для нового элемента
-        const productEl = mainDiv.querySelector('.compact-job-product');
-        if (productEl) {
-            updateTooltipState(productEl);
-        }
-
-        ['compact-job-progress','compact-job-completed','compact-job-error'].forEach(cls => card.querySelector(`.${cls}`)?.remove());
-
-        if (job.status === 'processing' || job.status === 'pending') {
-            const pct = job.boxes_count > 0 ? Math.min(100, Math.round(job.printed_count / job.boxes_count * 100)) : 0;
-            const div = document.createElement('div'); div.className = 'compact-job-progress';
-            div.innerHTML = `<div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div><span class="progress-text">${job.printed_count}/${job.boxes_count}</span>`;
-            card.appendChild(div);
-        } else if (job.status === 'completed') {
-            const div = document.createElement('div'); div.className = 'compact-job-completed';
-            div.textContent = `✅ ${job.boxes_count}/${job.boxes_count}`; card.appendChild(div);
-        } else if (job.status === 'failed' && job.error_message) {
-            const div = document.createElement('div'); div.className = 'compact-job-error';
-            div.title = job.error_message; div.textContent = '❌ Ошибка'; card.appendChild(div);
-        } else if (job.status === 'cancelled') {
-            const div = document.createElement('div'); div.className = 'compact-job-error';
-            div.textContent = '⏸️ Остановлено'; card.appendChild(div);
-        }
-
-
-    }
-
-    function updateAdminJobsList(jobs) {
-        const container = document.getElementById('adminJobsList');
-        if (!container) return;
-        if (jobs.length === 0) {
-            container.innerHTML = `<div class="empty-state"><div class="empty-icon">✅</div><h3>Нет активных заданий</h3><p>Все задания завершены</p></div>`;
-            return;
-        }
-        const statusText = s => ({pending:'⏳ В очереди',processing:'⚙️ В работе',completed:'✅ Завершено',failed:'❌ Ошибка',cancelled:'⏸️ Отменено'}[s] || s);
-        container.innerHTML = jobs.map(job => `
-            <div class="admin-job-card" data-job-id="${job.id}">
-                <div class="admin-job-header">
-                    <div class="admin-job-user">👤 ${job.user_login}</div>
-                    <div class="admin-job-status ${job.status}">${statusText(job.status)}</div>
-                    ${(job.status === 'pending' || job.status === 'processing')
-                        ? `<button class="btn-stop-job btn-stop-admin" onclick="stopPrintJob('${job.id}',this)">⏹ Стоп</button>` : ''}
-                </div>
-                <div class="admin-job-content">
-                    <div class="admin-job-product" data-tooltip="${job.product_name}">📦 ${job.product_name}</div>
-                    <div class="admin-job-printer" data-tooltip="${job.printer_name}">🖨️ ${job.printer_name}</div>
-                    <div class="admin-job-batch">Партия: <strong>${job.batch_number}</strong></div>
-                    <div class="admin-job-boxes">Коробки: <strong>${job.first_box && job.last_box ? `${job.first_box}–${job.last_box}` : '—'}</strong> (${job.printed_count}/${job.boxes_count})</div>
-                    <div class="admin-job-time">🕒 ${new Date(job.created_at).toLocaleString('ru-RU')}</div>
-                </div>
-            </div>`).join('');
-        container.querySelectorAll('[data-tooltip]').forEach(el => updateTooltipState(el));
-    }
-
-    // ─── УПРАВЛЕНИЕ ПРЕДПРОСМОТРОМ ───────────────────────────────────────────────
-
-    function rotatePreview(degrees) {
-        const previewImg = document.querySelector('#templatePreviewContainer img.preview-image');
-        if (!previewImg) {
-            alert('Сначала сгенерируйте предпросмотр этикетки');
-            return;
-        }
-        previewRotation += degrees;
-        applyPreviewRotation();
-    }
-
-    function resetPreview() {
-        const previewImg = document.querySelector('#templatePreviewContainer img.preview-image');
-        if (!previewImg) {
-            alert('Сначала сгенерируйте предпросмотр этикетки');
-            return;
-        }
-        previewRotation = 0;
-        applyPreviewRotation();
-    }
-
-    function downloadPreview() {
-        if (!previewImageUrl) {
-            alert('Нет изображения для скачивания. Сначала сгенерируйте предпросмотр.');
-            return;
-        }
-        const link = document.createElement('a');
-        link.href = previewImageUrl;
-        link.download = `label_preview_${new Date().toISOString().replace(/[:.]/g, '-')}.png`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-    }
-
-    // ─── УВЕЛИЧЕНИЕ ИЗОБРАЖЕНИЯ ────────────────────────────────────────────────
-    let isZoomModalOpen = false;
-
-    // Инициализация клика по изображению предпросмотра
-    function initImageZoom() {
-        const container = document.getElementById('templatePreviewContainer');
-        if (!container) return;
-
-        // Используем делегирование событий
-        container.addEventListener('click', function(e) {
-            const img = e.target.closest('img.preview-image');
-            if (img && !isZoomModalOpen) {
-                openImageZoom(img.src, previewRotation);  // ← Передаём угол поворота
-            }
-        });
-    }
-
-    // Открыть модальное окно увеличения
-    function openImageZoom(imageSrc, rotation = 0) {
-        const modal = document.getElementById('imageZoomModal');
-        const zoomedImg = document.getElementById('zoomedImage');
-
-        if (!modal || !zoomedImg) return;
-
-        zoomedImg.src = imageSrc;
-
-        // 🔧 Применяем тот же поворот и масштаб что и у превью
-        const normalizedRotation = ((rotation % 360) + 360) % 360;
-        let scale = 1;
-        if (normalizedRotation === 90 || normalizedRotation === 270) {
-            scale = 0.7;  // Тот же масштаб что и в превью
-        }
-        zoomedImg.style.transform = `rotate(${rotation}deg) scale(${scale})`;
-
-        modal.classList.add('active');
-        isZoomModalOpen = true;
-
-        // Блокируем прокрутку страницы
-        document.body.style.overflow = 'hidden';
-    }
-
-    // Закрыть модальное окно увеличения
-    function closeImageZoomModal() {
-        const modal = document.getElementById('imageZoomModal');
-        const zoomedImg = document.getElementById('zoomedImage');
-
-        if (!modal) return;
-
-        modal.classList.remove('active');
-        isZoomModalOpen = false;
-
-        // Возвращаем прокрутку
-        document.body.style.overflow = '';
-
-        // Очищаем src и transform после анимации
-        setTimeout(() => {
-            if (zoomedImg) {
-                zoomedImg.src = '';
-                zoomedImg.style.transform = '';
-            }
-        }, 300);
-    }
-
-    // Закрытие по клику вне изображения
-    function closeImageZoom(event) {
-        if (event.target.id === 'imageZoomModal') {
-            closeImageZoomModal();
-        }
-    }
-
-    // Закрытие по ESC
-    document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape' && isZoomModalOpen) {
-            closeImageZoomModal();
-        }
+        opt.textContent = `${displayName} (${t.printer_name})`;
+        opt.dataset.printCode = t.print_code;
+        opt.dataset.printerId = t.printer_id;
+        opt.dataset.printerName = t.printer_name;
+        opt.dataset.fullName = t.name;
+
+        select.appendChild(opt);
     });
 
-    // Вызов инициализации после загрузки DOM
-    document.addEventListener('DOMContentLoaded', function () {
-        const today = new Date().toISOString().split('T')[0];
-        document.getElementById('markingDate').value = today;
-        setupSearchFilter();
-        setupBoxCountCalculation();
-        setupExpirationCalculation();
-        setupFormValidation();
-        startJobsUpdate();
-        initImageZoom();
-        initTooltips();
+    select.disabled = false;
+    // Триггерим изменение, чтобы загрузить превью первого шаблона и синхронизировать принтер
+    select.dispatchEvent(new Event('change'));
+}
+
+document.getElementById('templateSelect').addEventListener('change', function() {
+    const selectedOption = this.options[this.selectedIndex];
+    if (!selectedOption || !selectedOption.value) {
+        currentZplCode = null;
+        return;
+    }
+
+    currentZplCode = selectedOption.dataset.printCode;
+    currentTemplateId = this.value;
+
+    // Обновляем информационные карточки справа
+    const nameEl = document.getElementById('templateInfoName');
+    if (nameEl) {
+        const fullName = selectedOption.dataset.fullName || selectedOption.textContent.split(' (')[0];
+        nameEl.textContent = fullName;
+        updateElementTooltip(nameEl, fullName);
+    }
+
+    const typeEl = document.getElementById('templateInfoType');
+    if (typeEl && currentZplCode) {
+        if (currentZplCode.startsWith('^XA')) { typeEl.textContent = 'ZPL (Zebra)'; typeEl.style.color = '#3d478a'; }
+        else if (currentZplCode.startsWith('SIZE')) { typeEl.textContent = 'TSPL (TSC)'; typeEl.style.color = '#2e7d32'; }
+        else { typeEl.textContent = 'Другой формат'; typeEl.style.color = '#6c757d'; }
+    }
+
+    // Синхронизируем выпадающий список принтеров (выбираем принтер, привязанный к шаблону)
+    const printerId = selectedOption.dataset.printerId;
+    const printerSelect = document.getElementById('printerSelect');
+    if (printerSelect && printerId) {
+        const printerOption = printerSelect.querySelector(`option[value="${printerId}"]`);
+        if (printerOption) {
+            printerSelect.value = printerId;
+            printerSelect.dispatchEvent(new Event('change'));
+        }
+    }
+
+    // Генерируем предпросмотр для выбранного шаблона
+    renderPreview({ useLiveData: false });
+});
+
+// Вызывается при выборе принтера — синхронизируем блок «Принтер» в форме
+function onPrinterSelected(printer) {
+    const nameEl = document.getElementById('printerInfoName');
+    const ipEl   = document.getElementById('printerInfoIp');
+    if (nameEl) { nameEl.textContent = printer.name; updateElementTooltip(nameEl, printer.name); }
+    if (ipEl)   ipEl.textContent = `${printer.ip_address}:${printer.port_address}`;
+}
+
+function loadPrinters(printers, defaultPrinterId = null) {
+    const select = document.getElementById('printerSelect');
+    const meta   = document.getElementById('printerSelectMeta');
+    if (!select) return;
+
+    select.innerHTML = '';
+
+    if (printers.length === 0) {
+        select.innerHTML = '<option value="" disabled selected>Нет доступных принтеров</option>';
+        if (meta) meta.textContent = 'В вашем цехе нет принтеров';
+        select.disabled = true;
+        return;
+    }
+
+    // Плейсхолдер только если принтеров несколько и нет дефолтного
+    if (printers.length > 1 && !defaultPrinterId) {
+        const ph = document.createElement('option');
+        ph.value = ''; ph.disabled = true; ph.selected = true;
+        ph.textContent = '— выберите принтер —';
+        select.appendChild(ph);
+    }
+
+    printers.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.id;
+        opt.textContent = `${p.name}  (${p.line_name})`;
+        opt.dataset.ip   = `${p.ip_address}:${p.port_address}`;
+        opt.dataset.name = p.name;
+        select.appendChild(opt);
     });
 
-    window.addEventListener('beforeunload', () => {
-        if (updateInterval) clearInterval(updateInterval);
-        // Освобождаем URL при закрытии страницы
+    // Выбираем принтер из шаблона, либо единственный доступный
+    const toSelect = defaultPrinterId ?? (printers.length === 1 ? printers[0].id : null);
+    if (toSelect) {
+        select.value = toSelect;
+        const chosen = printers.find(p => p.id === toSelect);
+        if (chosen) onPrinterSelected(chosen);
+    }
+
+    select.disabled = false;
+
+    select.onchange = () => {
+        const chosen = printers.find(p => p.id === select.value);
+        if (chosen) onPrinterSelected(chosen);
+    };
+}
+
+// ─── ЕДИНЫЙ РЕНДЕР ПРЕДПРОСМОТРА ─────────────────────────────────────────────
+// useLiveData = false  → тестовые данные
+// useLiveData = true   → данные из полей формы (пустые поля → тестовые значения)
+
+function renderPreview({ useLiveData = false } = {}) {
+    if (!currentZplCode) return;
+
+    const previewContainer = document.getElementById('templatePreviewContainer');
+    if (!previewContainer) {
+        console.warn('Контейнер предпросмотра не найден');
+        return;
+    }
+
+    // Создаём placeholder если он не существует
+    let previewPlaceholder = document.getElementById('previewPlaceholder');
+    if (!previewPlaceholder) {
+        previewPlaceholder = document.createElement('div');
+        previewPlaceholder.id = 'previewPlaceholder';
+        previewPlaceholder.className = 'preview-placeholder';
+    }
+
+    const badge = document.getElementById('previewSourceBadge');
+    const hintText = document.getElementById('previewHintText');
+    const btn = document.getElementById('btnRefreshPreview');
+    const spinner = document.getElementById('refreshSpinner');
+
+    // gtin для печати и отображения.
+    const gtin = document.getElementById('selectedGtin')?.value.trim();
+
+    // Обновляем плейсхолдер
+    previewPlaceholder.innerHTML = `<div class="preview-spinner"></div><p>Генерация предпросмотра...</p>`;
+    previewContainer.innerHTML = '';
+    previewContainer.appendChild(previewPlaceholder);
+
+    // Безопасно обновляем состояние кнопки и спиннера
+    if (btn) btn.disabled = true;
+    if (spinner) spinner.classList.remove('hidden');
+
+    // ── Вспомогательные форматы ───────────────────────────────────────────────
+    const today    = new Date();
+    const nextWeek = new Date(today);
+    nextWeek.setDate(today.getDate() + 7);
+
+    // Date → DDMMYY
+    const dateToDDMMYY = d =>
+        String(d.getDate()).padStart(2,'0') +
+        String(d.getMonth()+1).padStart(2,'0') +
+        String(d.getFullYear()).slice(-2);
+
+    // YYYY-MM-DD (из input[type=date]) → DDMMYY
+    const isoToDDMMYY = iso => {
+        if (!iso) return null;
+        const [y, m, d] = iso.split('-');
+        return `${d}${m}${y.slice(-2)}`;
+    };
+
+    // ── Параметры рендера ─────────────────────────────────────────────────────
+    let batch    = '01';
+    let markDate = dateToDDMMYY(today);
+    let expDate  = dateToDDMMYY(nextWeek);
+    let firstBox = '1';
+    let isLive   = false;
+
+    if (useLiveData) {
+        const batchVal    = document.getElementById('batchNumber')?.value.trim();
+        const dateVal     = document.getElementById('markingDate')?.value;  // YYYY-MM-DD
+        const firstBoxVal = document.getElementById('firstBox')?.value;
+
+        // Рассчитываем дату годности из дата + дней хранения
+        let expComputed = null;
+        if (dateVal && productExpirationDays) {
+            const md  = new Date(dateVal);
+            const exp = new Date(md);
+            exp.setDate(exp.getDate() + productExpirationDays);
+            expComputed = dateToDDMMYY(exp);
+        }
+
+        if (batchVal)   { batch    = batchVal;             isLive = true; }
+        if (dateVal)    { markDate = isoToDDMMYY(dateVal); isLive = true; }
+        if (expComputed){ expDate  = expComputed;          isLive = true; }
+        if (firstBoxVal && parseInt(firstBoxVal) > 0) { firstBox = firstBoxVal; isLive = true; }
+    }
+
+    // ── Бейдж источника данных ────────────────────────────────────────────────
+    if (badge) {
+        badge.textContent = isLive ? '✅ данные формы' : '🧪 тестовые данные';
+        badge.className   = 'preview-source-badge' + (isLive ? ' live' : '');
+    }
+
+    if (hintText) {
+        hintText.textContent = isLive
+            ? `Предпросмотр с данными формы — коробка №${firstBox}`
+            : 'Автоматически — тестовые данные. Нажмите «Обновить» для предпросмотра с реальными данными.';
+    }
+
+    // ── Запрос к бэкенду ─────────────────────────────────────────────────────
+    fetch('/templates/preview/render', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+            zpl_code:        currentZplCode,
+            batch_number:    batch,
+            marking_date:    markDate,
+            expiration_date: expDate,
+            first_box:       firstBox,
+            current_box:     firstBox,
+            gtin:            gtin,
+        })
+    })
+    .then(r => {
+        if (!r.ok) throw new Error(`Ошибка рендеринга: ${r.status}`);
+        return r.blob();
+    })
+    .then(blob => {
+        // Проверяем, что контейнер все еще существует
+        if (!previewContainer) return;
+
+        // Освобождаем предыдущий URL
         if (window.currentPreviewUrl) {
             URL.revokeObjectURL(window.currentPreviewUrl);
         }
-    });
 
-    window.addEventListener('beforeunload', () => { if (updateInterval) clearInterval(updateInterval);
+        const imageUrl = URL.createObjectURL(blob);
+        previewContainer.innerHTML = `<img src="${imageUrl}" class="preview-image" alt="Предпросмотр" data-template-id="${currentTemplateId}" title="Кликните для увеличения">`;
+
+        // Сохраняем URL для скачивания
+        window.currentPreviewUrl = imageUrl;
+        previewImageUrl = imageUrl;
+
+        // Сбрасываем поворот и масштаб при новом рендере
+        previewRotation = 0;
+        applyPreviewRotation();
+    })
+    .catch(err => {
+        console.error('Ошибка предпросмотра:', err);
+
+        // Проверяем, что плейсхолдер все еще существует
+        if (!previewPlaceholder || !previewContainer) return;
+
+        previewPlaceholder.innerHTML = `<div style="font-size:48px">🖼️</div><p>Предпросмотр недоступен</p><small>${err.message}</small>`;
+        previewContainer.innerHTML = '';
+        previewContainer.appendChild(previewPlaceholder);
+    })
+    .finally(() => {
+        // Безопасно восстанавливаем состояние кнопки и спиннера
+        if (btn) btn.disabled = false;
+        if (spinner) spinner.classList.add('hidden');
+    });
+}
+
+// Вызывается кнопкой «Обновить предпросмотр»
+function refreshPreviewFromForm() {
+    if (!currentZplCode) {
+        alert('Сначала выберите продукт для печати');
+        return;
+    }
+
+    const previewContainer = document.getElementById('templatePreviewContainer');
+    if (!previewContainer) {
+        alert('Ошибка: контейнер предпросмотра не найден. Обновите страницу.');
+        return;
+    }
+
+    renderPreview({ useLiveData: true });
+}
+
+function closePrintForm() {
+    document.getElementById('printFormContainer').classList.add('hidden');
+    document.getElementById('printForm').reset();
+    document.getElementById('boxCountDisplay').textContent = '0';
+    document.getElementById('expirationDateDisplay').textContent = '—';
+    currentZplCode    = null;
+    currentTemplateId = null;
+}
+
+// ─── РАСЧЁТЫ ─────────────────────────────────────────────────────────────────
+
+function setupBoxCountCalculation() {
+    const firstBox = document.getElementById('firstBox');
+    const lastBox  = document.getElementById('lastBox');
+    const display  = document.getElementById('boxCountDisplay');
+    const update = () => {
+        const f = parseInt(firstBox.value) || 0;
+        const l = parseInt(lastBox.value)  || 0;
+        display.textContent = (f > 0 && l >= f) ? String(l - f + 1) : '0';
+    };
+    firstBox.addEventListener('input', update);
+    lastBox.addEventListener('input', update);
+}
+
+function setupExpirationCalculation() {
+    document.getElementById('markingDate').addEventListener('change', calculateExpirationDate);
+}
+
+function calculateExpirationDate() {
+    const markingInput = document.getElementById('markingDate');
+    const display      = document.getElementById('expirationDateDisplay');
+    if (!markingInput.value || !productExpirationDays) { display.textContent = '—'; return; }
+    const exp = new Date(markingInput.value);
+    exp.setDate(exp.getDate() + productExpirationDays);
+    display.textContent = exp.toLocaleDateString('ru-RU', { year:'numeric', month:'long', day:'numeric' });
+}
+
+// ─── ВАЛИДАЦИЯ ФОРМЫ ─────────────────────────────────────────────────────────
+
+function setupFormValidation() {
+    const form      = document.getElementById('printForm');
+    const submitBtn = document.getElementById('printSubmitBtn');
+    if (!form || !submitBtn) return;
+    form.addEventListener('submit', function (e) {
+        const firstBox    = parseInt(document.getElementById('firstBox').value)  || 0;
+        const lastBox     = parseInt(document.getElementById('lastBox').value)   || 0;
+        const batchNumber = document.getElementById('batchNumber').value.trim();
+        if (!batchNumber) { e.preventDefault(); alert('Введите номер партии'); document.getElementById('batchNumber').focus(); return; }
+        if (firstBox <= 0 || lastBox <= 0) { e.preventDefault(); alert('Номера коробок должны быть больше 0'); return; }
+        if (firstBox > lastBox) { e.preventDefault(); alert('Номер первой коробки не может быть больше номера последней'); return; }
+        submitBtn.disabled = true;
+        submitBtn.querySelector('.btn-text').textContent = 'Запуск печати...';
+        submitBtn.querySelector('.btn-spinner').classList.remove('hidden');
+    });
+}
+
+// ─── ОСТАНОВКА ЗАДАНИЯ ───────────────────────────────────────────────────────
+
+async function stopPrintJob(jobId, btnEl) {
+    if (!confirm('Остановить печать? Текущая этикетка будет напечатана до конца.')) return;
+    btnEl.disabled = true;
+    btnEl.textContent = 'Остановка...';
+    try {
+        const resp = await fetch(`/api/printing/jobs/${jobId}/stop`, { method: 'POST' });
+        const data = await resp.json();
+        if (data.success) { btnEl.textContent = '⏸️ Остановлено'; btnEl.classList.add('btn-stopped'); }
+        else { alert(data.message || 'Не удалось остановить задание'); btnEl.disabled = false; btnEl.textContent = '⏹ Стоп'; }
+    } catch (err) {
+        alert('Ошибка при остановке: ' + err.message);
+        btnEl.disabled = false; btnEl.textContent = '⏹ Стоп';
+    }
+}
+
+// ─── АВТООБНОВЛЕНИЕ ЗАДАНИЙ ──────────────────────────────────────────────────
+
+function startJobsUpdate() {
+    updateInterval = setInterval(updateUserJobs, 3000);
+    if (document.getElementById('adminJobsList')) { updateAdminJobs(); setInterval(updateAdminJobs, 5000); }
+}
+
+async function updateUserJobs() {
+    try {
+        const resp = await fetch('/api/printing/jobs/user');
+        if (!resp.ok) return;
+        updateJobsList('userJobsList', (await resp.json()).jobs);
+    } catch (e) { console.error('Ошибка обновления заданий:', e); }
+}
+
+async function updateAdminJobs() {
+    try {
+        const resp = await fetch('/api/printing/jobs/active');
+        if (!resp.ok) return;
+        updateAdminJobsList((await resp.json()).jobs);
+    } catch (e) { console.error('Ошибка обновления активных заданий:', e); }
+}
+
+function updateJobsList(containerId, jobs) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    const limitedJobs = jobs.slice(0, 10);
+    const existingCards = new Map();
+    container.querySelectorAll('.compact-job-card').forEach(card => existingCards.set(card.dataset.jobId, card));
+    limitedJobs.forEach(job => {
+        let card = existingCards.get(job.id);
+        if (!card) {
+            card = document.createElement('div');
+            card.className = 'compact-job-card';
+            card.dataset.jobId = job.id;
+            container.insertBefore(card, container.firstChild);
+        }
+        updateJobCardContent(card, job);
+    });
+    container.querySelectorAll('.compact-job-card').forEach(card => {
+        if (!limitedJobs.some(j => j.id === card.dataset.jobId)) card.remove();
+    });
+}
+
+function updateJobCardContent(card, job) {
+    card.dataset.status = job.status;
+    let mainDiv = card.querySelector('.compact-job-main');
+    if (!mainDiv) { mainDiv = document.createElement('div'); mainDiv.className = 'compact-job-main'; card.appendChild(mainDiv); }
+
+    const emoji   = { pending:'⏳', processing:'⚙️', completed:'✅', failed:'❌', cancelled:'⏸️' };
+    const stopBtn = (job.status === 'pending' || job.status === 'processing')
+        ? `<button class="btn-stop-job" onclick="stopPrintJob('${job.id}', this)">⏹ Стоп</button>` : '';
+
+    mainDiv.innerHTML = `
+        <div class="compact-job-status ${job.status}">${emoji[job.status] || '?'}</div>
+        <div class="compact-job-info">
+            <div class="compact-job-product" data-tooltip="${job.product_name || 'Неизвестно'}">${job.product_name || 'Неизвестно'}</div>
+            <div class="compact-job-meta">
+                <span class="compact-job-batch">Партия: ${job.batch_number || '—'}</span>
+                <span class="compact-job-boxes">${job.first_box && job.last_box ? `${job.first_box}–${job.last_box}` : '—'} (${job.boxes_count})</span>
+            </div>
+        </div>
+        <div class="compact-job-time">${new Date(job.created_at).toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</div>
+        ${stopBtn}`;
+
+    // Активируем tooltip для нового элемента
+    const productEl = mainDiv.querySelector('.compact-job-product');
+    if (productEl) {
+        updateTooltipState(productEl);
+    }
+
+    ['compact-job-progress','compact-job-completed','compact-job-error'].forEach(cls => card.querySelector(`.${cls}`)?.remove());
+
+    if (job.status === 'processing' || job.status === 'pending') {
+        const pct = job.boxes_count > 0 ? Math.min(100, Math.round(job.printed_count / job.boxes_count * 100)) : 0;
+        const div = document.createElement('div'); div.className = 'compact-job-progress';
+        div.innerHTML = `<div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div><span class="progress-text">${job.printed_count}/${job.boxes_count}</span>`;
+        card.appendChild(div);
+    } else if (job.status === 'completed') {
+        const div = document.createElement('div'); div.className = 'compact-job-completed';
+        div.textContent = `✅ ${job.boxes_count}/${job.boxes_count}`; card.appendChild(div);
+    } else if (job.status === 'failed' && job.error_message) {
+        const div = document.createElement('div'); div.className = 'compact-job-error';
+        div.title = job.error_message; div.textContent = '❌ Ошибка'; card.appendChild(div);
+    } else if (job.status === 'cancelled') {
+        const div = document.createElement('div'); div.className = 'compact-job-error';
+        div.textContent = '⏸️ Остановлено'; card.appendChild(div);
+    }
+
+
+}
+
+function updateAdminJobsList(jobs) {
+    const container = document.getElementById('adminJobsList');
+    if (!container) return;
+    if (jobs.length === 0) {
+        container.innerHTML = `<div class="empty-state"><div class="empty-icon">✅</div><h3>Нет активных заданий</h3><p>Все задания завершены</p></div>`;
+        return;
+    }
+    const statusText = s => ({pending:'⏳ В очереди',processing:'⚙️ В работе',completed:'✅ Завершено',failed:'❌ Ошибка',cancelled:'⏸️ Отменено'}[s] || s);
+    container.innerHTML = jobs.map(job => `
+        <div class="admin-job-card" data-job-id="${job.id}">
+            <div class="admin-job-header">
+                <div class="admin-job-user">👤 ${job.user_login}</div>
+                <div class="admin-job-status ${job.status}">${statusText(job.status)}</div>
+                ${(job.status === 'pending' || job.status === 'processing')
+                    ? `<button class="btn-stop-job btn-stop-admin" onclick="stopPrintJob('${job.id}',this)">⏹ Стоп</button>` : ''}
+            </div>
+            <div class="admin-job-content">
+                <div class="admin-job-product" data-tooltip="${job.product_name}">📦 ${job.product_name}</div>
+                <div class="admin-job-printer" data-tooltip="${job.printer_name}">🖨️ ${job.printer_name}</div>
+                <div class="admin-job-batch">Партия: <strong>${job.batch_number}</strong></div>
+                <div class="admin-job-boxes">Коробки: <strong>${job.first_box && job.last_box ? `${job.first_box}–${job.last_box}` : '—'}</strong> (${job.printed_count}/${job.boxes_count})</div>
+                <div class="admin-job-time">🕒 ${new Date(job.created_at).toLocaleString('ru-RU')}</div>
+            </div>
+        </div>`).join('');
+    container.querySelectorAll('[data-tooltip]').forEach(el => updateTooltipState(el));
+}
+
+// ─── УПРАВЛЕНИЕ ПРЕДПРОСМОТРОМ ───────────────────────────────────────────────
+
+function rotatePreview(degrees) {
+    const previewImg = document.querySelector('#templatePreviewContainer img.preview-image');
+    if (!previewImg) {
+        alert('Сначала сгенерируйте предпросмотр этикетки');
+        return;
+    }
+    previewRotation += degrees;
+    applyPreviewRotation();
+}
+
+function resetPreview() {
+    const previewImg = document.querySelector('#templatePreviewContainer img.preview-image');
+    if (!previewImg) {
+        alert('Сначала сгенерируйте предпросмотр этикетки');
+        return;
+    }
+    previewRotation = 0;
+    applyPreviewRotation();
+}
+
+function downloadPreview() {
+    if (!previewImageUrl) {
+        alert('Нет изображения для скачивания. Сначала сгенерируйте предпросмотр.');
+        return;
+    }
+    const link = document.createElement('a');
+    link.href = previewImageUrl;
+    link.download = `label_preview_${new Date().toISOString().replace(/[:.]/g, '-')}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+// ─── УВЕЛИЧЕНИЕ ИЗОБРАЖЕНИЯ ────────────────────────────────────────────────
+let isZoomModalOpen = false;
+
+// Инициализация клика по изображению предпросмотра
+function initImageZoom() {
+    const container = document.getElementById('templatePreviewContainer');
+    if (!container) return;
+
+    // Используем делегирование событий
+    container.addEventListener('click', function(e) {
+        const img = e.target.closest('img.preview-image');
+        if (img && !isZoomModalOpen) {
+            openImageZoom(img.src, previewRotation);  // ← Передаём угол поворота
+        }
+    });
+}
+
+// Открыть модальное окно увеличения
+function openImageZoom(imageSrc, rotation = 0) {
+    const modal = document.getElementById('imageZoomModal');
+    const zoomedImg = document.getElementById('zoomedImage');
+
+    if (!modal || !zoomedImg) return;
+
+    zoomedImg.src = imageSrc;
+
+    // 🔧 Применяем тот же поворот и масштаб что и у превью
+    const normalizedRotation = ((rotation % 360) + 360) % 360;
+    let scale = 1;
+    if (normalizedRotation === 90 || normalizedRotation === 270) {
+        scale = 0.7;  // Тот же масштаб что и в превью
+    }
+    zoomedImg.style.transform = `rotate(${rotation}deg) scale(${scale})`;
+
+    modal.classList.add('active');
+    isZoomModalOpen = true;
+
+    // Блокируем прокрутку страницы
+    document.body.style.overflow = 'hidden';
+}
+
+// Закрыть модальное окно увеличения
+function closeImageZoomModal() {
+    const modal = document.getElementById('imageZoomModal');
+    const zoomedImg = document.getElementById('zoomedImage');
+
+    if (!modal) return;
+
+    modal.classList.remove('active');
+    isZoomModalOpen = false;
+
+    // Возвращаем прокрутку
+    document.body.style.overflow = '';
+
+    // Очищаем src и transform после анимации
+    setTimeout(() => {
+        if (zoomedImg) {
+            zoomedImg.src = '';
+            zoomedImg.style.transform = '';
+        }
+    }, 300);
+}
+
+// Закрытие по клику вне изображения
+function closeImageZoom(event) {
+    if (event.target.id === 'imageZoomModal') {
+        closeImageZoomModal();
+    }
+}
+
+// Закрытие по ESC
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && isZoomModalOpen) {
+        closeImageZoomModal();
+    }
+});
+
+// Вызов инициализации после загрузки DOM
+document.addEventListener('DOMContentLoaded', function () {
+    const today = new Date().toISOString().split('T')[0];
+    document.getElementById('markingDate').value = today;
+    setupSearchFilter();
+    setupBoxCountCalculation();
+    setupExpirationCalculation();
+    setupFormValidation();
+    startJobsUpdate();
+    initImageZoom();
+    initTooltips();
+});
+
+window.addEventListener('beforeunload', () => {
+    if (updateInterval) clearInterval(updateInterval);
+    // Освобождаем URL при закрытии страницы
+    if (window.currentPreviewUrl) {
+        URL.revokeObjectURL(window.currentPreviewUrl);
+    }
 });
 /**
  * Проверяет, обрезан ли текст в элементе

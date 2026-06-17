@@ -20,8 +20,7 @@ from crud.product import ProductCRUD
 from crud.printer import PrinterCRUD
 from crud.code_template import CodeTemplateCRUD
 from schemas import PrintJobCreate
-from models import User, Line, PrintJob, WorkshopUser, Product, Printer, CodeTemplate
-
+from models import User, Workshop, Line, PrintJob, WorkshopUser, Product, Printer, CodeTemplate
 from helpers.printers import substitute_placeholders, replace_cyrillic_in_zpl, send_zpl_safely
 from services.print_queue import PrintTask
 
@@ -78,8 +77,6 @@ async def _start_printing(
         gtin: str
 ):
     """
-    Реальная печать этикеток на промышленный принтер.
-
     Алгоритм:
     1. Подключаемся к принтеру через TCP (порт 9100)
     2. Для каждой коробки:
@@ -286,6 +283,7 @@ async def printing_page(
 async def start_printing(
         request: Request,
         product_id: UUID = Form(...),
+        template_id: UUID = Form(...),
         printer_id: UUID = Form(...),
         batch_number: str = Form(...),
         marking_date: date = Form(...),
@@ -342,13 +340,13 @@ async def start_printing(
         raise HTTPException(status_code=403, detail="Принтер недоступен или не найден")
 
     # Ищем шаблон для выбранного принтера и продукта.
-    template = (await db.execute(
-        select(CodeTemplate).where(
-            CodeTemplate.product_id == product_id,
-            CodeTemplate.printer_id == printer_id,
-            CodeTemplate.is_active == True
-        )
-    )).scalar_one_or_none()
+    template = await template_crud.get(db, template_id)
+    if not template:
+        raise HTTPException(status_code=404, detail="Выбранный шаблон не найден")
+    if not template.is_active:
+        raise HTTPException(status_code=400, detail="Выбранный шаблон не активен")
+    if template.product_id != product_id:
+        raise HTTPException(status_code=400, detail="Шаблон не принадлежит выбранному продукту")
 
     if not template:
         template = (await db.execute(
@@ -696,6 +694,76 @@ async def get_available_printers(
                 "line_name": p.line.name if p.line else "—",
             }
             for p in printers
+        ]
+    }
+
+@router.get('/api/printing/templates')
+async def get_templates_for_product(
+        product_id: UUID,
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_user)
+):
+    """Получить список активных шаблонов для продукта."""
+    # Проверка доступа пользователя к цехам
+    workshop_access = await db.execute(
+        select(WorkshopUser).where(
+            WorkshopUser.user_id == current_user.id,
+            WorkshopUser.is_active == True
+        )
+    )
+    user_workshops = workshop_access.scalars().all()
+    if not user_workshops:
+        raise HTTPException(status_code=403, detail="Нет доступа к цехам")
+
+    workshop_ids = [wu.workshop_id for wu in user_workshops]
+    line_ids = [wu.line_id for wu in user_workshops if wu.line_id]
+
+    # Получаем доступные принтеры.
+    printer_query = select(Printer.id).join(Line, Printer.line_id == Line.id)
+
+    workshops_result = await db.execute(select(Workshop).where(Workshop.id.in_(workshop_ids)))
+    workshops = workshops_result.scalars().all()
+    has_all_workshops = any(w.name == 'Все цеха' for w in workshops)
+
+    if not has_all_workshops:
+        if line_ids:
+            printer_query = printer_query.where(Line.id.in_(line_ids))
+        else:
+            printer_query = printer_query.where(Line.workshop_id.in_(workshop_ids))
+
+    accessible_printer_ids = (await db.execute(printer_query)).scalars().all()
+
+    # Получаем все активные шаблоны для продукта.
+    templates_query = (
+        select(CodeTemplate)
+        .options(selectinload(CodeTemplate.printer))
+        .where(
+            CodeTemplate.product_id == product_id,
+            CodeTemplate.is_active == True
+        )
+        .order_by(CodeTemplate.name)
+    )
+
+    # Фильтруем по доступным принтерам, если есть ограничения
+    if accessible_printer_ids:
+        filtered_query = templates_query.where(CodeTemplate.printer_id.in_(accessible_printer_ids))
+        templates = (await db.execute(filtered_query)).scalars().all()
+        if not templates:
+            # Fallback: если для доступных принтеров нет шаблонов, берем любые активные для продукта
+            templates = (await db.execute(templates_query)).scalars().all()
+    else:
+        templates = (await db.execute(templates_query)).scalars().all()
+
+    return {
+        "templates": [
+            {
+                "id": str(t.id),
+                "name": t.name,
+                "printer_id": str(t.printer_id),
+                "printer_name": t.printer.name if t.printer else "Неизвестный принтер",
+                "print_code": t.print_code,
+            }
+            for t in templates
         ]
     }
 
