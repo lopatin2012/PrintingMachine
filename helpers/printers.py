@@ -137,7 +137,7 @@ def substitute_placeholders(
     # ── GS1-128: партия. Указывается дата производства.
     gs1_party = marking_date.strftime('%d%m%y')
     # Добавляем символ-разделитель как в 1С.
-    gs1_party += ""
+    # gs1_party += ""
 
     zpl_code = zpl_code.replace('{gs1_128_batch}', gs1_party) # основное
     zpl_code = zpl_code.replace('{gs1_128_batch_number}', gs1_party) # alias
