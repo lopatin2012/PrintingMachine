@@ -284,6 +284,7 @@
                                 <div class="code-editor-wrapper">
                                     <div class="editor-toolbar">
                                         <button type="button" class="editor-btn" onclick="formatCode()">Форматировать</button>
+                                        <button type="button" class="editor-btn" onclick="shiftCoordinates()">📐 Сдвинуть</button>
                                         <button type="button" class="editor-btn" onclick="validateCode()">Проверить</button>
                                         <button type="button" class="editor-btn primary" onclick="previewCodeFromEditor()">👁️ Предпросмотр</button>
                                         <select id="codeLanguage" class="editor-select" onchange="changeLanguage()">
@@ -409,7 +410,40 @@ PRINT 1,1              // Печать 1 копии</code></pre>
             </div>
         </div>
     </div>
-
+    <!-- Модальное окно сдвига координат -->
+    <div id="shiftCoordinatesModal" class="modal hidden">
+        <div class="modal-content shift-modal">
+            <div class="modal-header">
+                <h3>📐 Сдвиг координат</h3>
+                <button class="close-btn" onclick="closeShiftModal()">&times;</button>
+            </div>
+            <div class="shift-content">
+                <p class="shift-description">
+                    Сдвигает все координаты <code>^FO</code> на указанные значения.
+                </p>
+                <div class="shift-grid">
+                    <div class="shift-field">
+                        <label for="shiftX">Смещение по X (пиксели)</label>
+                        <input type="number" id="shiftX" class="param-input" value="50" step="1">
+                        <small class="form-hint">Положительное значение сдвигает вправо</small>
+                    </div>
+                    <div class="shift-field">
+                        <label for="shiftY">Смещение по Y (пиксели)</label>
+                        <input type="number" id="shiftY" class="param-input" value="50" step="1">
+                        <small class="form-hint">Положительное значение сдвигает вниз</small>
+                    </div>
+                </div>
+                <div class="shift-preview">
+                    <label>Предпросмотр изменений:</label>
+                    <pre id="shiftPreview" class="shift-preview-code"></pre>
+                </div>
+            </div>
+            <div class="modal-footer flex-center">
+                <button class="btn-secondary" onclick="closeShiftModal()">Отмена</button>
+                <button class="btn-submit" onclick="applyShift()">Применить сдвиг</button>
+            </div>
+        </div>
+    </div>
 </div>
 {% endblock %}
 
@@ -1378,6 +1412,132 @@ function setupTemplateSearch() {
             searchInput.blur();
         }
     });
+}
+
+// ─── СДВИГ КООРДИНАТ ─────────────────────────────────────────────────────────
+
+let originalCodeForShift = '';
+
+/** Открывает модальное окно сдвига координат */
+function shiftCoordinates() {
+    const textarea = document.getElementById('templateCode');
+    if (!textarea) return;
+
+    originalCodeForShift = textarea.value;
+
+    if (!originalCodeForShift.trim()) {
+        alert('⚠️ Введите ZPL-код для сдвига координат');
+        textarea.focus();
+        return;
+    }
+
+    // Проверяем наличие команд ^FO
+    if (!/\^FO/i.test(originalCodeForShift)) {
+        alert('⚠️ В коде не найдены команды ^FO для сдвига');
+        return;
+    }
+
+    document.getElementById('shiftCoordinatesModal').classList.remove('hidden');
+
+    // Генерируем предпросмотр с текущими значениями
+    updateShiftPreview();
+
+    // Добавляем обработчики для живого обновления предпросмотра
+    document.getElementById('shiftX').addEventListener('input', updateShiftPreview);
+    document.getElementById('shiftY').addEventListener('input', updateShiftPreview);
+}
+
+/** Обновляет предпросмотр изменений */
+function updateShiftPreview() {
+    const dx = parseInt(document.getElementById('shiftX').value) || 0;
+    const dy = parseInt(document.getElementById('shiftY').value) || 0;
+
+    const shifted = shiftFOCoordinates(originalCodeForShift, dx, dy);
+
+    // Подсвечиваем изменённые строки
+    const preview = document.getElementById('shiftPreview');
+    preview.innerHTML = highlightChanges(originalCodeForShift, shifted);
+}
+
+/** Сдвигает координаты ^FO в ZPL-коде */
+function shiftFOCoordinates(zplCode, dx, dy) {
+    // Регулярное выражение для поиска ^FO с любыми пробелами
+    const pattern = /(\^[Ff][Oo]\s*)(\d+)\s*,\s*(\d+)/g;
+
+    return zplCode.replace(pattern, (match, prefix, x, y) => {
+        const newX = Math.max(0, parseInt(x) + dx);
+        const newY = Math.max(0, parseInt(y) + dy);
+
+        // Сохраняем пробелы после ^FO
+        return `${prefix}${newX},${newY}`;
+    });
+}
+
+/** Подсвечивает изменённые строки в предпросмотре */
+function highlightChanges(original, modified) {
+    const originalLines = original.split('\n');
+    const modifiedLines = modified.split('\n');
+
+    const result = [];
+
+    for (let i = 0; i < modifiedLines.length; i++) {
+        const origLine = originalLines[i] || '';
+        const modLine = modifiedLines[i] || '';
+
+        if (origLine !== modLine && /\^FO/i.test(modLine)) {
+            // Подсвечиваем изменённую строку
+            const highlighted = modLine.replace(
+                /(\^[Ff][Oo]\s*)(\d+)\s*,\s*(\d+)/,
+                '$1<mark>$2,$3</mark>'
+            );
+            result.push(highlighted);
+        } else {
+            result.push(escapeHtml(modLine));
+        }
+    }
+
+    return result.join('\n');
+}
+
+/** Экранирует HTML-символы */
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+/** Применяет сдвиг к коду */
+function applyShift() {
+    const dx = parseInt(document.getElementById('shiftX').value) || 0;
+    const dy = parseInt(document.getElementById('shiftY').value) || 0;
+
+    if (dx === 0 && dy === 0) {
+        alert('⚠️ Укажите хотя бы одно ненулевое значение смещения');
+        return;
+    }
+
+    const textarea = document.getElementById('templateCode');
+    const shiftedCode = shiftFOCoordinates(textarea.value, dx, dy);
+
+    // Записываем изменённый код обратно
+    textarea.value = shiftedCode;
+
+    // Закрываем модальное окно
+    closeShiftModal();
+
+    // Уведомление
+    alert(`✅ Сдвиг применён!\nX: +${dx}, Y: +${dy}`);
+}
+
+/** Закрывает модальное окно сдвига */
+function closeShiftModal() {
+    document.getElementById('shiftCoordinatesModal').classList.add('hidden');
+
+    // Удаляем обработчики
+    const shiftX = document.getElementById('shiftX');
+    const shiftY = document.getElementById('shiftY');
+    if (shiftX) shiftX.removeEventListener('input', updateShiftPreview);
+    if (shiftY) shiftY.removeEventListener('input', updateShiftPreview);
 }
 </script>
 {% endblock %}
