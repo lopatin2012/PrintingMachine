@@ -44,7 +44,7 @@
     <div class="search-section">
         <div class="search-wrapper">
             <input type="text" id="productSearch" class="search-input"
-                   placeholder="Поиск по наименованию, коду 1С или GTIN..."
+                   placeholder="Поиск по наименованию, коду 1С или GTIN групповой упаковки..."
                    value="{{ search_query }}">
             <button id="clearSearch" class="clear-btn">✕</button>
         </div>
@@ -60,7 +60,7 @@
                 <h3 class="product-name" data-tooltip="{{ product.name|e }}">{{ product.name }}</h3>
                 <div class="product-codes">
                     <span class="product-code-badge">1С: {{ product.current_code_1c }}</span>
-                    <span class="product-code-badge gtin">GTIN: {{ product.gtin }}</span>
+                    <span class="product-code-badge gtin">GTIN (группа): {{ product.gtin }}</span>
                 </div>
             </div>
             <div class="product-info">
