@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 from typing import Optional, Any, Coroutine
 
 from jose import jwt, JWTError
-from passlib.context import CryptContext
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.responses import Response
@@ -15,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import User
 from crud.user import UserCRUD
-from auth_utils import pwd_context
 from database import get_db
 
 user_crud = UserCRUD()
@@ -74,8 +72,8 @@ async def get_current_admin(
     """Проверка прав админа"""
     if not current_user:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail='Авторизуйтесь'
+            status_code=status.HTTP_302_FOUND,
+            headers={'Location': 'user_login'}
         )
 
     if not current_user.role or not current_user.role.is_admin:
