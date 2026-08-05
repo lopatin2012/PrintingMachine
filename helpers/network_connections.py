@@ -41,7 +41,7 @@ class SocketIOClient:
             self,
             server_url: str,
             auto_reconnect: bool = True,
-            reconnection_attempts: int = 5,
+            reconnection_attempts: int = 10,
             reconnection_delay: int = 1,
             logger: Optional[logging.Logger] = None,
             socketio_options: Optional[Dict[str, Any]] = None
