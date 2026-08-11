@@ -29,7 +29,7 @@ class PrintTask:
     boxes_count: int
     gtin: str = ''
     retries: int = 0
-    max_retries: int = 3
+    max_retries: int = 10
     created_at: datetime = field(default_factory=datetime.now)
     printed_count: int = field(default=0, init=False, repr=False)
 
