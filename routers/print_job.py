@@ -196,6 +196,7 @@ async def start_printing(
         zpl_code=template.print_code,
         printer_ip=printer.ip_address,
         printer_port=printer.port_address,
+        printer_type=printer.printer_type,
         marking_date=marking_date,
         expiration_date=expiration_date,
         batch_number=batch_number.strip(),

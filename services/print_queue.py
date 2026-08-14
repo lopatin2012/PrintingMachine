@@ -10,10 +10,16 @@ from typing import Callable, AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from helpers.printers import (
-    check_printer_status, replace_cyrillic_in_zpl, substitute_placeholders, send_zpl_safely)
+    check_printer_status_by_type, clear_printer_queue, replace_cyrillic_in_zpl,
+    substitute_placeholders, send_zpl_safely)
 from models import PrintJob
 
 logger = logging.getLogger(__name__)
+
+# Как часто сохранять прогресс печати (printed_count) в БД — этикеток.
+PROGRESS_COMMIT_EVERY = 25
+# Как часто проверять статус принтера (паузу) во время печати — этикеток.
+STATUS_CHECK_EVERY = 25
 
 
 @dataclass
@@ -30,6 +36,7 @@ class PrintTask:
     gtin: str = ''
     gtin_unit: str = ''
     article: str = ''
+    printer_type: str = 'zebra'
     uip_include_batch: bool = True
     retries: int = 0
     max_retries: int = 10
@@ -90,7 +97,8 @@ class PrinterQueue:
         task = self._active_tasks.get(str(job_id))
         if task:
             task.max_retries = -1  # флаг отмены
-            self._cancel_printer_queue(task.printer_ip, task.printer_port)
+            self._cancel_printer_queue(
+                task.printer_ip, task.printer_port, task.printer_type)
             logger.info("Задание %s помечено как отменённое", job_id)
             return True
         return False
@@ -98,16 +106,18 @@ class PrinterQueue:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _cancel_printer_queue(self, printer_ip: str, printer_port: int) -> bool:
-        """Отправить ~JA на принтер — сброс всех заданий в его очереди."""
-        try:
-            with socket.create_connection((printer_ip, printer_port), timeout=5) as sock:
-                sock.sendall(b'~JA')
-            logger.info("~JA отправлен на принтер %s:%d", printer_ip, printer_port)
-            return True
-        except OSError as e:
-            logger.warning("Не удалось отправить ~JA на %s:%d: %s", printer_ip, printer_port, e)
-            return False
+    def _cancel_printer_queue(self, printer_ip: str, printer_port: int,
+                              printer_type: str = 'zebra') -> bool:
+        """Очистить очередь принтера (Zebra ~JA / TSC CLS)."""
+        result = clear_printer_queue(printer_ip, printer_port, printer_type)
+        if result.get('success'):
+            logger.info("Очередь принтера %s:%d очищена", printer_ip, printer_port)
+        else:
+            logger.warning(
+                "Не удалось очистить очередь принтера %s:%d: %s",
+                printer_ip, printer_port, result.get('error'),
+            )
+        return result.get('success', False)
 
     def _is_cancelled(self, task: PrintTask) -> bool:
         return task.max_retries < 0
@@ -198,7 +208,10 @@ class PrinterQueue:
                 await self._mark_job_cancelled(task.job_id, db)
                 return
 
-            status = check_printer_status(task.printer_ip, task.printer_port, timeout=2.0)
+            status = check_printer_status_by_type(
+                task.printer_ip, task.printer_port, task.printer_type,
+                timeout=2.0
+            )
 
             if not status.get('ok'):
                 wait = 2 ** attempt
@@ -236,7 +249,10 @@ class PrinterQueue:
                 await self._mark_job_cancelled(task.job_id, db)
                 return
             await asyncio.sleep(2.0)
-            status = check_printer_status(task.printer_ip, task.printer_port, timeout=1.0)
+            status = check_printer_status_by_type(
+                task.printer_ip, task.printer_port, task.printer_type,
+                timeout=1.0
+            )
             if status.get('ok') and not status.get('paused'):
                 logger.info("Принтер %s возобновил работу", printer_addr)
                 return
@@ -250,18 +266,31 @@ class PrinterQueue:
         start_index: int,
     ):
         """Отправить ящики на принтер, начиная с start_index."""
+        # Задание загружаем один раз — в цикле обновляем только printed_count.
+        job = await db.get(PrintJob, task.job_id)
+        if not job:
+            logger.error("Задание %s не найдено в БД при печати", task.job_id)
+            return
+
+        # Очистка очереди принтера перед отправкой (Zebra ~JA / TSC CLS).
+        clear_cmd = b'CLS\r\n' if (task.printer_type or '').lower() == 'tsc' else b'~JA'
+
         with socket.create_connection((task.printer_ip, task.printer_port), timeout=10) as sock:
-            # Очистка очереди перед отправкой новых кодов.
-            sock.sendall(b'~JA')
+            sock.sendall(clear_cmd)
 
             for i in range(start_index, task.boxes_count):
                 if self._is_cancelled(task):
                     await self._mark_job_cancelled(task.job_id, db)
                     return
 
-                status = check_printer_status(task.printer_ip, task.printer_port, timeout=1.0)
-                if status.get('paused'):
-                    raise ConnectionError("Принтер перешёл в паузу во время печати")
+                # Статус проверяем пакетно, а не на каждую этикетку.
+                if i % STATUS_CHECK_EVERY == 0:
+                    status = check_printer_status_by_type(
+                        task.printer_ip, task.printer_port, task.printer_type,
+                        timeout=1.0
+                    )
+                    if status.get('paused'):
+                        raise ConnectionError("Принтер перешёл в паузу во время печати")
 
                 current_box = task.first_box + i
                 box_zpl = substitute_placeholders(
@@ -278,19 +307,19 @@ class PrinterQueue:
                 send_zpl_safely(sock, box_zpl.encode('utf-8'))
 
                 task.printed_count = i + 1
-                job = await db.get(PrintJob, task.job_id)
-                if job:
-                    job.printed_count = task.printed_count
+                job.printed_count = task.printed_count
+
+                # Прогресс в БД сохраняем пакетно, а не на каждую этикетку
+                # (printed_count в памяти точный — докачка после сбоя идёт с него).
+                if (i + 1) % PROGRESS_COMMIT_EVERY == 0:
                     await db.commit()
 
                 await asyncio.sleep(0.1)
 
-        job = await db.get(PrintJob, task.job_id)
-        if job:
-            job.status = 'completed'
-            job.completed_at = datetime.now()
-            job.printed_count = task.boxes_count
-            await db.commit()
+        job.status = 'completed'
+        job.completed_at = datetime.now()
+        job.printed_count = task.boxes_count
+        await db.commit()
         logger.info("Задание %s успешно завершено", task.job_id)
 
     # ------------------------------------------------------------------

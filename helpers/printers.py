@@ -353,15 +353,19 @@ def check_printer_status_tsc(ip: str, port: int = 9100, timeout: float = 3.0) ->
 
         paused = bool(status & 0x10)
         printing = bool(status & 0x20)
-        ok = status == 0x00
 
+        # ok = True — принтер ответил (пауза/занятость/ошибки передаются
+        # отдельными флагами, как в ~HS у Zebra). Иначе очередь печати
+        # принимала бы паузу/печать за недоступность.
         return {
-            'ok': ok,
+            'ok': True,
             'paused': paused,
             'printing': printing,
             'error_flag': bool(errors),
             'errors': errors,
-            'message': 'Готов к печати' if ok else ('Идёт печать' if printing and not errors else '; '.join(errors) or 'Неизвестный статус'),
+            'message': 'Готов к печати' if not errors and not paused else (
+                'Идёт печать' if printing and not errors else '; '.join(errors) or 'Неизвестный статус'
+            ),
             'raw': f'0x{status:02X}',
         }
     except ConnectionRefusedError:
