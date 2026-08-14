@@ -62,6 +62,7 @@ class Printer(Base):
     name = Column(String(50), index=True, unique=True, nullable=False, comment='Наименование')
     ip_address = Column(String(45), index=True, unique=True, nullable=False, comment='IP-адрес')
     port_address = Column(Integer, default=9100, index=True, nullable=False, comment='Порт')
+    printer_type = Column(String(20), default='zebra', nullable=False, server_default='zebra', comment='Тип принтера (zebra/tsc)')
     created_at = Column(MoscowDateTime(), server_default=func.now(), comment='Дата добавления')
     edited_at = Column(MoscowDateTime(), server_default=func.now(), onupdate=func.now(), comment='Дата редактирования')
 

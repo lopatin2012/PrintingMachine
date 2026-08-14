@@ -64,12 +64,15 @@ class LineResponse(LineInDBBase):
     workshop: Optional[WorkshopResponse] = Field(None, description='Цех линии')
 
 # ---------- Принтер ----------
+PRINTER_TYPES = ('zebra', 'tsc')
+
 class PrinterBase(BaseModel):
     """Базовая схема принтера"""
     line_id: UUID = Field(..., description='UUID линии')
     name: str = Field(..., max_length=50, description='Наименование')
     ip_address: str = Field(..., max_length=45, description='IP-адрес')
     port_address: int = Field(9100, ge=1, le=65535, description='Порт')
+    printer_type: str = Field('zebra', description='Тип принтера (zebra/tsc)')
 
     @field_validator('ip_address')
     @classmethod
@@ -79,6 +82,15 @@ class PrinterBase(BaseModel):
             ipaddress.ip_address(v)
         except ValueError:
             raise ValueError('Некорректный IP-адрес')
+        return v
+
+    @field_validator('printer_type')
+    @classmethod
+    def validate_printer_type(cls, v: str):
+        """Валидация типа принтера"""
+        v = (v or 'zebra').strip().lower()
+        if v not in PRINTER_TYPES:
+            raise ValueError('Тип принтера должен быть zebra или tsc')
         return v
 
 
@@ -92,6 +104,7 @@ class PrinterUpdate(BaseModel):
     name: Optional[str] = Field(None, max_length=50, description='Наименование')
     ip_address: str = Field(None, description='IP-адрес')
     port_address: Optional[int] = Field(None, ge=1, le=65535, description='Порт')
+    printer_type: Optional[str] = Field(None, description='Тип принтера (zebra/tsc)')
 
     @field_validator('ip_address')
     @classmethod
@@ -101,6 +114,17 @@ class PrinterUpdate(BaseModel):
             ipaddress.ip_address(v)
         except ValueError:
             raise ValueError('Некорректный IP-адрес')
+        return v
+
+    @field_validator('printer_type')
+    @classmethod
+    def validate_printer_type(cls, v: str):
+        """Валидация типа принтера"""
+        if v is None:
+            return v
+        v = v.strip().lower()
+        if v not in PRINTER_TYPES:
+            raise ValueError('Тип принтера должен быть zebra или tsc')
         return v
 
 class PrinterInDBBase(PrinterBase):

@@ -278,9 +278,9 @@
                                         <option value="">Выберите принтер</option>
                                         {% for printer in printers %}
                                         <option value="{{ printer.id }}"
-                                                title="{{ printer.name }} | IP: {{ printer.ip_address }}:{{ printer.port_address }}"
+                                                title="{{ printer.name }} | IP: {{ printer.ip_address }}:{{ printer.port_address }} | Тип: {{ printer.printer_type|printer_type_label }}"
                                                 data-searchable="{{ printer.name|lower }} {{ printer.ip_address|lower }}">
-                                            {{ printer.name }} ({{ printer.ip_address }}:{{ printer.port_address }})
+                                            {{ printer.name }} ({{ printer.printer_type|printer_type_label }}, {{ printer.ip_address }}:{{ printer.port_address }})
                                         </option>
                                         {% endfor %}
                                     </select>

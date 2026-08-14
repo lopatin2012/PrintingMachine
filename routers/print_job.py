@@ -530,6 +530,7 @@ async def get_available_printers(
                 "name": p.name,
                 "ip_address": p.ip_address,
                 "port_address": p.port_address,
+                "printer_type": p.printer_type,
                 "line_name": p.line.name if p.line else "—",
             }
             for p in printers

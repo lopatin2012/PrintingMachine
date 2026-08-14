@@ -5,6 +5,11 @@
 
 {% block css %}
 <link rel="stylesheet" href="/static/css/printers.css">
+<style>
+.printer-type-badge { display:inline-block; padding:4px 10px; border-radius:20px; font-size:13px; font-weight:600; }
+.printer-type-badge.type-zebra { background:#e8eaf6; color:#3d478a; }
+.printer-type-badge.type-tsc { background:#e0f2f1; color:#00695c; }
+</style>
 {% endblock %}
 
 {% block header_title %}Управление принтерами{% endblock %}
@@ -76,6 +81,7 @@
                     <th>Наименование</th>
                     <th>IP-адрес</th>
                     <th>Порт</th>
+                    <th>Тип</th>
                     <th>Цех</th>
                     <th>Линия</th>
                     <th>Дата создания</th>
@@ -96,6 +102,9 @@
                     </td>
                     <td>{{ printer.port_address }}</td>
                     <td>
+                        <span class="printer-type-badge type-{{ printer.printer_type }}">{{ printer.printer_type|printer_type_label }}</span>
+                    </td>
+                    <td>
                         {% if printer.line and printer.line.workshop %}
                         <span class="workshop-badge">{{ printer.line.workshop.name }}</span>
                         {% else %}
@@ -113,7 +122,7 @@
                     {% if user and user.role and user.role.is_admin %}
                     <td class="actions-cell">
                         <button class="table-btn edit-btn"
-                                onclick='editPrinter("{{ printer.id }}", "{{ printer.name|e }}", "{{ printer.ip_address|e }}", {{ printer.port_address }}, "{{ printer.line_id }}")'>
+                                onclick='editPrinter("{{ printer.id }}", "{{ printer.name|e }}", "{{ printer.ip_address|e }}", {{ printer.port_address }}, "{{ printer.printer_type }}", "{{ printer.line_id }}")'>
                             ✏️ Редактировать
                         </button>
                         <button class="table-btn delete-btn"
@@ -227,6 +236,25 @@
                         >
                     </div>
                     <small class="form-hint">Стандартный порт принтеров Zebra — 9100</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="printerType" class="form-label">
+                        <span class="label-icon">🏷️</span>
+                        Тип принтера
+                    </label>
+                    <div class="input-wrapper">
+                        <select
+                            id="printerType"
+                            name="printer_type"
+                            required
+                            class="form-input"
+                        >
+                            <option value="zebra">Zebra</option>
+                            <option value="tsc">TSC</option>
+                        </select>
+                    </div>
+                    <small class="form-hint">Производитель принтера: Zebra или TSC</small>
                 </div>
 
                 <div class="form-actions">
@@ -355,12 +383,13 @@ function openAddPrinterForm() {
     document.getElementById('printerName').value = '';
     document.getElementById('ipAddress').value = '';
     document.getElementById('portAddress').value = '9100';
+    document.getElementById('printerType').value = 'zebra';
     document.getElementById('lineId').value = '';
     document.getElementById('printerFormModal').classList.remove('hidden');
 }
 
 // Открыть форму редактирования
-function editPrinter(id, name, ip, port, lineId) {
+function editPrinter(id, name, ip, port, printerType, lineId) {
     document.getElementById('formTitle').textContent = '✏️ Редактировать принтер';
     document.getElementById('formSubmitText').textContent = 'Сохранить изменения';
     document.getElementById('printerForm').action = `/printers/${id}`;
@@ -368,6 +397,7 @@ function editPrinter(id, name, ip, port, lineId) {
     document.getElementById('printerName').value = name.trim();
     document.getElementById('ipAddress').value = ip.trim();
     document.getElementById('portAddress').value = port;
+    document.getElementById('printerType').value = printerType || 'zebra';
     document.getElementById('lineId').value = lineId;
     document.getElementById('printerFormModal').classList.remove('hidden');
     document.getElementById('printerName').focus();

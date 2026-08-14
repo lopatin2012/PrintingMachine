@@ -548,7 +548,8 @@ function loadPrinters(printers, defaultPrinterId = null) {
     printers.forEach(p => {
         const opt = document.createElement('option');
         opt.value = p.id;
-        opt.textContent = `${p.name}  (${p.line_name})`;
+        const typeLabel = (p.printer_type || '').toLowerCase() === 'tsc' ? 'TSC' : 'Zebra';
+        opt.textContent = `${p.name}  (${typeLabel}, ${p.line_name})`;
         opt.dataset.ip   = `${p.ip_address}:${p.port_address}`;
         opt.dataset.name = p.name;
         select.appendChild(opt);

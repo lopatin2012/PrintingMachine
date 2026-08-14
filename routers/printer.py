@@ -84,11 +84,20 @@ async def printer_create(
         line_id: UUID = Form(...),
         ip_address: str = Form(...),
         port_address: int = Form(...),
+        printer_type: str = Form('zebra'),
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_admin)
 ):
     """Добавить принтер"""
     name = name.strip()
+    printer_type = printer_type.strip().lower()
+
+    if printer_type not in ('zebra', 'tsc'):
+        return RedirectResponse(
+            url='/printers?error=Тип принтера должен быть Zebra или TSC',
+            status_code=status.HTTP_303_SEE_OTHER
+        )
+
     if len(name) < 2:
         return RedirectResponse(
             url='/printers?error=Название принтера должно содержать минимум 2 символа',
@@ -141,12 +150,13 @@ async def printer_create(
         name=name,
         line_id=line_id,
         ip_address=ip_address,
-        port_address=port_address
+        port_address=port_address,
+        printer_type=printer_type
     )
     added = await printer_crud.create(db, printer_data)
 
     logger.info(
-        f'Принтер "{name}" ({ip_address}:{port_address}) добавлен на линию "{line.name}" '
+        f'Принтер "{name}" ({ip_address}:{port_address}, тип: {printer_type}) добавлен на линию "{line.name}" '
         f'(цех: {line.workshop.name if line.workshop else "не указан"}) '
         f'пользователем {current_user.login}'
     )
@@ -164,6 +174,7 @@ async def printer_update(
     line_id: UUID = Form(...),
     ip_address: str = Form(...),
     port_address: int = Form(9100),
+    printer_type: str = Form('zebra'),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_admin)
 ):
@@ -172,6 +183,13 @@ async def printer_update(
     if not printer:
         return RedirectResponse(
             url='/printers?error=Принтер не найден',
+            status_code=status.HTTP_303_SEE_OTHER
+        )
+
+    printer_type = printer_type.strip().lower()
+    if printer_type not in ('zebra', 'tsc'):
+        return RedirectResponse(
+            url='/printers?error=Тип принтера должен быть Zebra или TSC',
             status_code=status.HTTP_303_SEE_OTHER
         )
 
@@ -233,13 +251,14 @@ async def printer_update(
         name=name,
         line_id=line_id,
         ip_address=ip_address,
-        port_address=port_address
+        port_address=port_address,
+        printer_type=printer_type
     )
     updated = await printer_crud.update(db, printer_id, printer_data)
 
     logger.info(
         f'Принтер {printer_id} обновлён пользователем {current_user.login}. '
-        f'Новое название: {name}, IP: {ip_address}:{port_address}, линия: {line.name}'
+        f'Новое название: {name}, IP: {ip_address}:{port_address}, тип: {printer_type}, линия: {line.name}'
     )
 
     return RedirectResponse(
@@ -319,6 +338,7 @@ async def test_printer_connection(
             'id': str(printer.id),
             'name': printer.name,
             'ip': printer.ip_address,
-            'port': printer.port_address
+            'port': printer.port_address,
+            'printer_type': printer.printer_type
         }
     }
