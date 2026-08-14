@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import socket
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID
@@ -18,12 +19,27 @@ logger = logging.getLogger(__name__)
 
 # Как часто сохранять прогресс печати (printed_count) в БД — этикеток.
 PROGRESS_COMMIT_EVERY = 25
-# Как часто проверять статус принтера (паузу) во время печати — этикеток.
-STATUS_CHECK_EVERY = 25
 # Сколько раз подряд ждать недоступный принтер, прежде чем сдаться.
 MAX_UNREACHABLE_WAITS = 60
 # Сколько сетевых сбоев подряд при печати допускаем (переподключение), затем отказ.
 MAX_RECONNECT_ATTEMPTS = 10
+
+# --- Контроль буфера принтера (запас этикеток в очереди принтера) ---
+# Принцип (как с VideoJet: держим запас ~60, проверяем каждую секунду):
+# НЕ ждём полного осушения буфера. Как только уровень достигает максимума —
+# приостанавливаем отправку, ждём снижения до целевого уровня и продолжаем.
+# Так принтер никогда не остаётся без этикеток и при этом не «захлёбывается»
+# командами (что лишает его реакции на отмену печати).
+BUFFER_CHECK_INTERVAL = 1.0     # как часто проверять уровень буфера, секунд
+BUFFER_MAX_LEVEL = 100          # Zebra: форматов в буфере (~HS eee), при которых стоп
+BUFFER_TARGET_LEVEL = 60        # Zebra: запас, при котором возобновляем отправку
+# Сколько секунд ждать снижения буфера до целевого уровня, прежде чем сдаться.
+BUFFER_WAIT_MAX_SECONDS = 60
+
+# Количество этикеток в буфере TSC с хоста не запрашивается (см. docstring
+# check_printer_status_tsc) — контроль для TSC бинарный, по флагу
+# «Receive buffer full» из <ESC>!S: стоп при переполнении, продолжение —
+# когда флаг снят.
 
 
 @dataclass
@@ -319,19 +335,18 @@ class PrinterQueue:
                     task.job_id, task.first_box + start_index,
                 )
 
+            # Контроль статуса и буфера — раз в BUFFER_CHECK_INTERVAL по времени
+            # (не по числу этикеток: принтер печатает с переменной скоростью).
+            last_buffer_check = time.monotonic() - BUFFER_CHECK_INTERVAL
             for i in range(start_index, task.boxes_count):
                 if self._is_cancelled(task):
                     await self._mark_job_cancelled(task.job_id, db)
                     return
 
-                # Статус проверяем пакетно, а не на каждую этикетку.
-                if i % STATUS_CHECK_EVERY == 0:
-                    status = check_printer_status_by_type(
-                        task.printer_ip, task.printer_port, task.printer_type,
-                        timeout=1.0
-                    )
-                    if status.get('paused'):
-                        raise ConnectionError("Принтер перешёл в паузу во время печати")
+                now = time.monotonic()
+                if now - last_buffer_check >= BUFFER_CHECK_INTERVAL:
+                    last_buffer_check = now
+                    await self._control_printer_buffer(task)
 
                 current_box = task.first_box + i
                 box_zpl = substitute_placeholders(
@@ -362,6 +377,95 @@ class PrinterQueue:
         job.printed_count = task.boxes_count
         await db.commit()
         logger.info("Задание %s успешно завершено", task.job_id)
+
+    async def _control_printer_buffer(self, task: PrintTask):
+        """Проверка статуса принтера и поддержание запаса в его буфере.
+
+        Не дожидаемся полной очистки буфера — держим запас этикеток:
+          Zebra — уровень форматов в буфере (~HS eee): стоп при
+                  BUFFER_MAX_LEVEL (или флаге переполнения), продолжение —
+                  когда уровень ниже BUFFER_TARGET_LEVEL;
+          TSC   — флаг «Receive buffer full» (<ESC>!S): стоп при переполнении,
+                  продолжение — когда флаг снят (количество недоступно).
+        """
+        printer_addr = f"{task.printer_ip}:{task.printer_port}"
+        status = check_printer_status_by_type(
+            task.printer_ip, task.printer_port, task.printer_type,
+            timeout=1.0,
+        )
+
+        if not status.get('ok'):
+            # Статус не получен (сбой сети) — не останавливаем печать здесь:
+            # следующая отправка этикетки сама выявит обрыв и включит
+            # переподключение.
+            logger.warning(
+                "Не удалось получить статус принтера %s при контроле буфера: %s",
+                printer_addr, status.get('error'),
+            )
+            return
+
+        if status.get('paused'):
+            raise ConnectionError("Принтер перешёл в паузу во время печати")
+
+        level_raw = status.get('formats_in_buffer', '0')
+        level = int(level_raw) if level_raw not in ('?', '', None) else 0
+        too_full = bool(status.get('buffer_full')) or (level >= BUFFER_MAX_LEVEL and level > 0)
+        if not too_full:
+            return
+
+        logger.warning(
+            "Буфер принтера %s заполнен (форматов: %s, флаг full: %s). "
+            "Ждём снижения до %d, чтобы оставить запас этикеток...",
+            printer_addr, level_raw, status.get('buffer_full'), BUFFER_TARGET_LEVEL,
+        )
+        await self._wait_for_buffer_reserve(task, printer_addr)
+
+    async def _wait_for_buffer_reserve(self, task: PrintTask, printer_addr: str):
+        """Ждать, пока буфер принтера снизится до целевого уровня запаса.
+
+        Возобновляем отправку, не дожидаясь полного осушения:
+          Zebra — уровень форматов упал ниже BUFFER_TARGET_LEVEL;
+          TSC   — флаг переполнения снят.
+        """
+        for _ in range(int(BUFFER_WAIT_MAX_SECONDS / BUFFER_CHECK_INTERVAL)):
+            if self._is_cancelled(task):
+                raise ConnectionError("Задание отменено при ожидании освобождения буфера")
+            await asyncio.sleep(BUFFER_CHECK_INTERVAL)
+
+            status = check_printer_status_by_type(
+                task.printer_ip, task.printer_port, task.printer_type,
+                timeout=1.0,
+            )
+            if not status.get('ok'):
+                # Сбой сети при ожидании — пусть внешний цикл переподключения
+                # разберётся с соединением.
+                raise ConnectionError(
+                    f"Не удалось получить статус принтера {printer_addr}: "
+                    f"{status.get('error')}"
+                )
+            if status.get('paused'):
+                raise ConnectionError("Принтер перешёл в паузу во время печати")
+
+            if status.get('buffer_full'):
+                continue  # буфер всё ещё заполнен
+
+            if (task.printer_type or '').lower() == 'tsc':
+                logger.info("Буфер принтера %s освободился (TSC), продолжаем", printer_addr)
+                return
+
+            level_raw = status.get('formats_in_buffer', '0')
+            level = int(level_raw) if level_raw not in ('?', '', None) else 0
+            if level < BUFFER_TARGET_LEVEL:
+                logger.info(
+                    "Буфер принтера %s: осталось %d форматов, продолжаем",
+                    printer_addr, level,
+                )
+                return
+
+        raise ConnectionError(
+            f"Буфер принтера {printer_addr} не снижается до целевого уровня "
+            f"({BUFFER_TARGET_LEVEL}) за {BUFFER_WAIT_MAX_SECONDS}с"
+        )
 
     # ------------------------------------------------------------------
     # DB status helpers

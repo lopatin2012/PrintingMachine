@@ -110,6 +110,7 @@ def check_printer_status(ip: str, port: int = 9100, timeout: float = 3.0) -> dic
             # Строка 1: флаги по спецификации ~HS.
             paper_out = len(p1) > 1 and p1[1] == '1'
             paused = len(p1) > 2 and p1[2] == '1'
+            formats_in_buffer = p1[4] if len(p1) > 4 else '0'
             buffer_full = len(p1) > 5 and p1[5] == '1'
             under_temp = len(p1) > 10 and p1[10] == '1'
             over_temp = len(p1) > 11 and p1[11] == '1'
@@ -140,6 +141,8 @@ def check_printer_status(ip: str, port: int = 9100, timeout: float = 3.0) -> dic
                 'paper_out': paper_out,
                 'ribbon_out': ribbon_out,
                 'head_up': head_up,
+                'buffer_full': buffer_full,
+                'formats_in_buffer': formats_in_buffer,
                 'message': 'Готов к печати' if not errors and not paused else (
                     'Пауза' if paused and not errors else '; '.join(errors)
                 ),
@@ -326,10 +329,85 @@ def send_zpl_safely(sock: socket.socket, data: bytes, chunk_size: int = 4096) ->
 
 
 def check_printer_status_tsc(ip: str, port: int = 9100, timeout: float = 3.0) -> dict:
-    """Статус TSC-принтера через команду <ESC>!? (возвращает 1 байт-маску)."""
+    """Статус TSC-принтера.
+
+    Основной запрос — <ESC>!S: принтер возвращает
+    <STX>[4 байта]<ETX>, где:
+      байт 1 — состояние: '`' (0x60) = пауза, 'P' (0x50) = печать,
+                            'W' (0x57) = формирование изображения;
+      байт 2 — предупреждения: 'H' (0x48) = Receive buffer full
+                            (буфер приёма заполнен);
+      байты 3-4 — ошибки ('A' перегрев, 'D' ошибка головки, 'H' застревание
+                   резака, 'P' нехватка памяти, '`' головка открыта и т.д.).
+
+    Количество этикеток в буфере TSC не запрашивается с хоста (функция LOB()
+    из документации выполняется только внутри TSPL-программы), поэтому
+    контроль буфера для TSC — бинарный: по флагу переполнения.
+
+    Если <ESC>!S не поддерживается (прошивка старше V6.29) — fallback на
+    <ESC>!? (1 байт-маска) без контроля буфера.
+    """
+    # --- Основной запрос <ESC>!S ---
+    detailed = None
     try:
         with socket.create_connection((ip, port), timeout=timeout) as sock:
-            # Небольшая пауза после подключения.
+            time.sleep(0.05)
+            sock.sendall(b'\x1b!S')
+            sock.settimeout(2.0)
+            detailed = sock.recv(32)
+    except Exception:
+        # <ESC>!S может быть не поддержан прошивкой — пробуем fallback ниже.
+        detailed = None
+
+    if detailed:
+        start = detailed.find(b'\x02')   # <STX>
+        end = detailed.find(b'\x03')     # <ETX>
+        if start != -1 and end != -1 and end - start >= 5:
+            msg, warn, err1, err2 = detailed[start + 1:start + 5]
+            errors = []
+            if err1 == 0x41:
+                errors.append('перегрев печатающей головки')
+            if err1 == 0x42:
+                errors.append('перегрев шагового двигателя')
+            if err1 == 0x44:
+                errors.append('ошибка печатающей головки')
+            if err1 == 0x48:
+                errors.append('застревание резака')
+            if err1 == 0x50:
+                errors.append('недостаточно памяти')
+            if err2 == 0x41:
+                errors.append('закончилась бумага')
+            if err2 == 0x42:
+                errors.append('замятие бумаги')
+            if err2 == 0x44:
+                errors.append('закончилась лента (риббон)')
+            if err2 == 0x48:
+                errors.append('застревание ленты')
+            if err2 == 0x60:
+                errors.append('открыта печатающая головка')
+
+            paused = msg == 0x60     # '`'
+            printing = msg in (0x50, 0x57)  # 'P' / 'W'
+            buffer_full = warn == 0x48      # 'H'
+
+            return {
+                'ok': True,
+                'paused': paused,
+                'printing': printing,
+                'error_flag': bool(errors),
+                'errors': errors,
+                'buffer_full': buffer_full,
+                # Количество форматов TSC недоступно хосту (см. docstring).
+                'formats_in_buffer': '?',
+                'message': 'Готов к печати' if not errors and not paused else (
+                    'Идёт печать' if printing and not errors else '; '.join(errors) or 'Неизвестный статус'
+                ),
+                'raw': f"{chr(msg)}{chr(warn)}{chr(err1)}{chr(err2)}",
+            }
+
+    # --- Fallback: <ESC>!? (1 байт-маска), если <ESC>!S не поддерживается ---
+    try:
+        with socket.create_connection((ip, port), timeout=timeout) as sock:
             time.sleep(0.05)
             sock.sendall(b'\x1b!?')
             sock.settimeout(2.0)
@@ -363,6 +441,9 @@ def check_printer_status_tsc(ip: str, port: int = 9100, timeout: float = 3.0) ->
             'printing': printing,
             'error_flag': bool(errors),
             'errors': errors,
+            # <ESC>!? не даёт информации о буфере — контроль недоступен.
+            'buffer_full': False,
+            'formats_in_buffer': '?',
             'message': 'Готов к печати' if not errors and not paused else (
                 'Идёт печать' if printing and not errors else '; '.join(errors) or 'Неизвестный статус'
             ),
