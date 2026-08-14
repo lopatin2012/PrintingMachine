@@ -27,12 +27,18 @@
     <!-- Меню управления принтерами -->
     <div class="page-header">
         <h2>🖨️ Список принтеров</h2>
-        {% if user and user.role and user.role.is_admin %}
-        <button id="addPrinterBtn" class="action-button primary">
-            <span class="button-icon">➕</span>
-            <span class="button-text">Добавить принтер</span>
-        </button>
-        {% endif %}
+        <div style="display:flex;gap:10px;align-items:center;">
+            {% if user and user.role and user.role.is_admin %}
+            <a href="/printers/control" class="action-button" style="text-decoration:none;">
+                <span class="button-icon">🖥️</span>
+                <span class="button-text">Контроль</span>
+            </a>
+            <button id="addPrinterBtn" class="action-button primary">
+                <span class="button-icon">➕</span>
+                <span class="button-text">Добавить принтер</span>
+            </button>
+            {% endif %}
+        </div>
     </div>
 
     <!-- Фильтры -->

@@ -1,0 +1,67 @@
+/* static/css/printers_control.css — страница «Контроль принтеров» */
+
+.control-container { max-width: 1200px; margin: 0 auto; }
+.control-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }
+.control-title { font-size: 24px; color: var(--primary); margin: 0; }
+
+.refresh-btn {
+    padding: 8px 14px; border-radius: 8px; border: none;
+    background: var(--primary); color: white; font-weight: 600; cursor: pointer;
+    font-size: 14px;
+}
+.refresh-btn:hover { background: var(--primary-hover); }
+.refresh-btn:disabled { opacity: 0.6; cursor: wait; }
+
+/* Бейдж типа принтера */
+.printer-type-badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 700; vertical-align: middle; }
+.type-zebra { background: #e8eaf6; color: #3d478a; }
+.type-tsc { background: #e0f2f1; color: #00695c; }
+
+/* Имя принтера + мета */
+.printer-cell strong { font-size: 15px; color: var(--primary); }
+.printer-meta { font-size: 12px; color: var(--gray); margin-top: 2px; }
+
+/* Статус */
+.status-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 20px; font-weight: 700; font-size: 13px; white-space: nowrap; }
+.status-badge::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.status-online { background: #d4edda; color: #155724; }
+.status-offline { background: #f8d7da; color: #721c24; }
+.status-error { background: #f8d7da; color: #721c24; }
+.status-paused { background: #fff3cd; color: #856404; }
+.status-printing { background: #d1ecf1; color: #0c5460; }
+.status-detail { font-size: 12px; color: var(--gray); margin-top: 4px; max-width: 260px; }
+
+/* Активные задания */
+.job-item { font-size: 12px; padding: 4px 0; border-bottom: 1px dashed var(--border); }
+.job-item:last-child { border-bottom: none; }
+.job-item strong { color: var(--primary); }
+.job-item .job-progress { color: var(--gray); font-size: 11px; }
+.no-jobs { font-size: 12px; color: #adb5bd; }
+
+/* Команды управления: явные цвета (перекрываем глобальное button { color: white }) */
+.cmd-btn {
+    padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border);
+    background: #f1f3f5; color: #495057; font-weight: 600; font-size: 13px;
+    cursor: pointer; transition: all 0.15s; white-space: nowrap;
+}
+.cmd-btn:hover { background: #e2e6ea; color: #212529; }
+.cmd-btn.primary { background: var(--primary); border-color: var(--primary); color: white; }
+.cmd-btn.primary:hover { background: var(--primary-hover); color: white; }
+/* Внимание: класс назван danger-btn, т.к. .danger в base.css задаёт красный фон !important */
+.cmd-btn.danger-btn { background: #fdf2f3; border-color: #f5c6cb; color: #a71d2a; }
+.cmd-btn.danger-btn:hover { background: #f8d7da; color: #721c24; }
+.cmd-btn:disabled { opacity: 0.6; cursor: wait; }
+
+/* Компактные ячейки действий */
+.actions-cell { gap: 6px; }
+
+/* Тосты */
+.toast { position: fixed; top: 20px; right: 20px; padding: 10px 18px; border-radius: 8px; color: white; font-weight: 600; z-index: 1000; display: none; box-shadow: var(--shadow); }
+.toast.success { background: #2e7d32; }
+.toast.error { background: #c62828; }
+
+@media (max-width: 768px) {
+    .control-header { flex-direction: column; align-items: stretch; }
+    .actions-cell { flex-direction: column; align-items: stretch; }
+    .cmd-btn { width: 100%; }
+}

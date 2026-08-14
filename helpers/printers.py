@@ -37,13 +37,30 @@ def process_uip_batch(batch: str, length: int = 12) -> str:
 
 def check_printer_status(ip: str, port: int = 9100, timeout: float = 3.0) -> dict:
     """
-    Получение статуса Zebra ZT610 через команду ~HS.
+    Получение статуса Zebra через команду ~HS.
 
-    Формат ответа:
+    Формат ответа (ZPL II Programming Guide):
         \x02<line1>\x03\r\n\x02<line2>\x03\r\n...
 
-    Line 1 (основной статус):
-        mode,paused,errors,head_heat,head_cold,paper_out,ribbon_out,label_taken,...
+    Строка 1: aaa,b,c,dddd,eee,f,g,h,iii,j,k,l
+        aaa  = настройки интерфейса
+        b    = paper out (1 = нет бумаги)
+        c    = pause (1 = пауза)
+        dddd = длина этикетки в точках
+        eee  = количество форматов в буфере приёма
+        f    = buffer full (1 = буфер переполнен)
+        g    = диагностический режим
+        h    = частичный формат
+        j    = corrupt RAM
+        k    = низкая температура
+        l    = высокая температура
+
+    Строка 2: mmm,n,o,p,q,r,s,t,uuuuuuuu,v,www
+        mmm  = настройки функций
+        o    = head up (1 = головка открыта)
+        p    = ribbon out (1 = нет ленты)
+        t    = label waiting
+        uuuuuuuu = осталось этикеток в задании
     """
     try:
         with socket.create_connection((ip, port), timeout=timeout) as sock:
@@ -53,7 +70,7 @@ def check_printer_status(ip: str, port: int = 9100, timeout: float = 3.0) -> dic
             # Отправляем команду
             sock.sendall(b'~HS\r\n')
 
-            # Читаем ответ с таймаутом
+            # Читаем ответ с таймаутом (ждём минимум 2 строки из трёх)
             sock.settimeout(2.0)
             response = b''
 
@@ -63,8 +80,7 @@ def check_printer_status(ip: str, port: int = 9100, timeout: float = 3.0) -> dic
                     if not chunk:
                         break
                     response += chunk
-                    # Если получили хотя бы один полный блок — достаточно для парсинга
-                    if b'\x03\r\n' in response:
+                    if response.count(b'\x03\r\n') >= 2:
                         break
                 except socket.timeout:
                     break
@@ -75,36 +91,61 @@ def check_printer_status(ip: str, port: int = 9100, timeout: float = 3.0) -> dic
             # Декодируем и очищаем от управляющих символов
             raw = response.decode('ascii', errors='ignore')
 
-            # Извлекаем все блоки между \x02 и \x03
+            # Извлекаем блоки между \x02 и \x03
             blocks = re.findall(r'\x02(.*?)\x03', raw)
 
-            if not blocks:
-                # Fallback: если нет маркеров, пробуем распарсить как есть
-                lines = [line.strip() for line in raw.split('\r\n') if line.strip()]
-                if lines:
-                    first_line = lines[0]
-                else:
-                    return {'ok': False, 'error': 'Cannot parse response', 'raw': raw}
+            if blocks:
+                first_line = blocks[0]
+                second_line = blocks[1] if len(blocks) > 1 else ''
             else:
-                first_line = blocks[0]  # Берём первый блок — основной статус
+                lines = [line.strip() for line in raw.split('\r\n') if line.strip()]
+                if not lines:
+                    return {'ok': False, 'error': 'Cannot parse response', 'raw': raw}
+                first_line = lines[0]
+                second_line = lines[1] if len(lines) > 1 else ''
 
-            # Парсим первую строку: mode,paused,errors,head_heat,...
-            parts = first_line.split(',')
+            p1 = first_line.split(',')
+            p2 = second_line.split(',') if second_line else []
 
-            if len(parts) >= 3:
-                return {
-                    'ok': True,
-                    'paused': parts[2] == '1',  # 1 = принтер на паузе
-                    'error_flag': parts[1] != '00000000',  # 00000000 = нет ошибок
-                    'mode': parts[0] if len(parts) > 0 else 'unknown',
-                    'head_heat': parts[3] if len(parts) > 3 else '0',
-                    'paper_out': parts[5] == '1' if len(parts) > 5 else False,
-                    'ribbon_out': parts[6] == '1' if len(parts) > 6 else False,
-                    'raw_first_line': first_line,
-                    'raw_full': raw[:200] + ('...' if len(raw) > 200 else ''),
-                }
+            # Строка 1: флаги по спецификации ~HS.
+            paper_out = len(p1) > 1 and p1[1] == '1'
+            paused = len(p1) > 2 and p1[2] == '1'
+            buffer_full = len(p1) > 5 and p1[5] == '1'
+            under_temp = len(p1) > 10 and p1[10] == '1'
+            over_temp = len(p1) > 11 and p1[11] == '1'
 
-            return {'ok': True, 'paused': False, 'error_flag': False, 'raw': first_line}
+            # Строка 2: head up (o) и ribbon out (p).
+            head_up = len(p2) > 2 and p2[2] == '1'
+            ribbon_out = len(p2) > 3 and p2[3] == '1'
+
+            errors = []
+            if paper_out:
+                errors.append('нет бумаги')
+            if ribbon_out:
+                errors.append('нет ленты')
+            if head_up:
+                errors.append('открыта печатающая головка')
+            if under_temp:
+                errors.append('низкая температура головки')
+            if over_temp:
+                errors.append('высокая температура головки')
+            if buffer_full:
+                errors.append('буфер переполнен')
+
+            return {
+                'ok': True,
+                'paused': paused,
+                'error_flag': bool(errors),
+                'errors': errors,
+                'paper_out': paper_out,
+                'ribbon_out': ribbon_out,
+                'head_up': head_up,
+                'message': 'Готов к печати' if not errors and not paused else (
+                    'Пауза' if paused and not errors else '; '.join(errors)
+                ),
+                'raw_first_line': first_line,
+                'raw_full': raw[:200] + ('...' if len(raw) > 200 else ''),
+            }
 
     except ConnectionRefusedError:
         logger.error(f"Принтер {ip}:{port} отклоняет подключение")
@@ -275,3 +316,99 @@ def send_zpl_safely(sock: socket.socket, data: bytes, chunk_size: int = 4096) ->
         if sent == 0:
             raise OSError("Соединение с принтером разорвано в процессе отправки")
         offset += sent
+
+
+# ---------------------------------------------------------------------------
+# Управление принтерами (статус, очистка очереди, перезапуск)
+# ---------------------------------------------------------------------------
+# Zebra — ZPL:  ~HS (статус), ~JA (отмена всех заданий), ~JR (перезапуск)
+# TSC   — TSPL: <ESC>!? / <ESC>!S (статус), CLS (очистка буфера), <ESC>!C (перезапуск)
+
+
+def check_printer_status_tsc(ip: str, port: int = 9100, timeout: float = 3.0) -> dict:
+    """Статус TSC-принтера через команду <ESC>!? (возвращает 1 байт-маску)."""
+    try:
+        with socket.create_connection((ip, port), timeout=timeout) as sock:
+            # Небольшая пауза после подключения.
+            time.sleep(0.05)
+            sock.sendall(b'\x1b!?')
+            sock.settimeout(2.0)
+            data = sock.recv(16)
+
+        if not data:
+            return {'ok': False, 'error': 'Empty response'}
+
+        status = data[0]
+        errors = []
+        if status & 0x01:
+            errors.append('открыта печатающая головка')
+        if status & 0x02:
+            errors.append('замятие бумаги')
+        if status & 0x04:
+            errors.append('закончилась бумага')
+        if status & 0x08:
+            errors.append('закончилась лента (риббон)')
+        if status & 0x80:
+            errors.append('другая ошибка')
+
+        paused = bool(status & 0x10)
+        printing = bool(status & 0x20)
+        ok = status == 0x00
+
+        return {
+            'ok': ok,
+            'paused': paused,
+            'printing': printing,
+            'error_flag': bool(errors),
+            'errors': errors,
+            'message': 'Готов к печати' if ok else ('Идёт печать' if printing and not errors else '; '.join(errors) or 'Неизвестный статус'),
+            'raw': f'0x{status:02X}',
+        }
+    except ConnectionRefusedError:
+        logger.error(f"Принтер TSC {ip}:{port} отклоняет подключение")
+        return {'ok': False, 'error': 'ConnectionRefused'}
+    except socket.timeout:
+        logger.warning(f"Таймаут при получении статуса от TSC {ip}:{port}")
+        return {'ok': False, 'error': 'Timeout'}
+    except Exception as e:
+        logger.exception(f"Ошибка при проверке статуса TSC {ip}:{port}: {e}")
+        return {'ok': False, 'error': str(e)}
+
+
+def check_printer_status_by_type(ip: str, port: int = 9100,
+                                 printer_type: str = 'zebra',
+                                 timeout: float = 3.0) -> dict:
+    """Проверка статуса принтера по его типу (zebra — ZPL, tsc — TSPL)."""
+    if (printer_type or '').lower() == 'tsc':
+        return check_printer_status_tsc(ip, port, timeout)
+    return check_printer_status(ip, port, timeout)
+
+
+def send_printer_command(ip: str, port: int, command: bytes,
+                         timeout: float = 5.0) -> dict:
+    """Отправка одиночной команды на принтер по TCP."""
+    try:
+        with socket.create_connection((ip, port), timeout=timeout) as sock:
+            sock.sendall(command)
+        return {'success': True}
+    except (socket.timeout, socket.error, OSError) as e:
+        logger.error(f"Ошибка отправки команды на принтер {ip}:{port}: {e}")
+        return {'success': False, 'error': str(e)}
+
+
+def clear_printer_queue(ip: str, port: int = 9100, printer_type: str = 'zebra') -> dict:
+    """Очистка очереди печати принтера.
+
+    Zebra — ~JA (отмена всех заданий в очереди принтера);
+    TSC   — CLS (очистка буфера изображения, ожидающие этикетки).
+    """
+    if (printer_type or '').lower() == 'tsc':
+        return send_printer_command(ip, port, b'CLS\r\n')
+    return send_printer_command(ip, port, b'~JA')
+
+
+def restart_printer(ip: str, port: int = 9100, printer_type: str = 'zebra') -> dict:
+    """Перезапуск принтера. Zebra — ~JR, TSC — <ESC>!C."""
+    if (printer_type or '').lower() == 'tsc':
+        return send_printer_command(ip, port, b'\x1b!C')
+    return send_printer_command(ip, port, b'~JR')

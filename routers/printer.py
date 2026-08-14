@@ -17,7 +17,12 @@ from crud.line import LineCRUD
 from database import get_db
 from crud.printer import PrinterCRUD
 from schemas import PrinterCreate, PrinterUpdate, PrinterResponse
-from models import User, Line, Printer, Workshop
+from models import User, Line, Printer, Workshop, PrintJob
+from helpers.printers import (
+    check_printer_status_by_type,
+    clear_printer_queue,
+    restart_printer,
+)
 
 # Шаблоны.
 from templates_config import templates
@@ -342,3 +347,163 @@ async def test_printer_connection(
             'printer_type': printer.printer_type
         }
     }
+
+
+# ─── Управление принтерами: статус, очередь, команды ─────────────────────────
+
+def _printer_status_summary(status: dict) -> dict:
+    """Нормализация статуса для фронтенда."""
+    if not status.get('ok'):
+        return {
+            'state': 'offline',
+            'label': 'Недоступен',
+            'detail': status.get('error') or status.get('message') or '',
+            'raw': status.get('raw', ''),
+        }
+    if status.get('error_flag'):
+        return {
+            'state': 'error',
+            'label': 'Ошибка',
+            'detail': status.get('message') or '; '.join(status.get('errors', [])),
+            'raw': status.get('raw', ''),
+        }
+    if status.get('printing'):
+        return {
+            'state': 'printing',
+            'label': 'Печать',
+            'detail': status.get('message') or 'Идёт печать',
+            'raw': status.get('raw', ''),
+        }
+    if status.get('paused'):
+        return {
+            'state': 'paused',
+            'label': 'Пауза',
+            'detail': status.get('message') or 'Принтер на паузе',
+            'raw': status.get('raw', ''),
+        }
+    return {
+        'state': 'online',
+        'label': 'Готов',
+        'detail': status.get('message') or 'Готов к печати',
+        'raw': status.get('raw', ''),
+    }
+
+
+@router.get('/printers/control', response_class=HTMLResponse)
+async def printer_control_page(
+        request: Request,
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_admin)
+):
+    """Страница управления принтерами: статус, задания, команды."""
+    result = await db.execute(
+        select(Printer)
+        .join(Line, Printer.line_id == Line.id)
+        .join(Workshop, Line.workshop_id == Workshop.id)
+        .order_by(Workshop.name, Line.name, Printer.name)
+    )
+    printers = result.scalars().all()
+
+    # Активные задания по принтерам.
+    printer_ids = [p.id for p in printers]
+    active_jobs = []
+    if printer_ids:
+        active_jobs = (await db.execute(
+            select(PrintJob)
+            .where(
+                PrintJob.printer_id.in_(printer_ids),
+                PrintJob.status.in_(['pending', 'processing'])
+            )
+            .order_by(PrintJob.created_at.desc())
+        )).scalars().all()
+    jobs_by_printer: dict[str, list] = {}
+    for job in active_jobs:
+        jobs_by_printer.setdefault(str(job.printer_id), []).append(job)
+
+    # Первичная проверка статуса (с коротким таймаутом).
+    printers_status = {}
+    for p in printers:
+        status = check_printer_status_by_type(
+            p.ip_address, p.port_address, p.printer_type, timeout=1.5
+        )
+        printers_status[str(p.id)] = _printer_status_summary(status)
+
+    return templates.TemplateResponse(
+        'printers_control.html',
+        {
+            'request': request,
+            'printers': printers,
+            'printers_status': printers_status,
+            'jobs_by_printer': jobs_by_printer,
+            'user': current_user,
+        }
+    )
+
+
+@router.post('/api/printers/{printer_id}/status')
+async def api_printer_status(
+        printer_id: UUID,
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_admin)
+):
+    """Проверка текущего статуса принтера (Zebra ~HS / TSC <ESC>!?)."""
+    printer = await printer_crud.get(db, printer_id)
+    if not printer:
+        raise HTTPException(status_code=404, detail='Принтер не найден')
+
+    status = check_printer_status_by_type(
+        printer.ip_address, printer.port_address, printer.printer_type, timeout=3.0
+    )
+    return {
+        'printer_id': str(printer.id),
+        'status': _printer_status_summary(status),
+        'raw': status,
+    }
+
+
+@router.post('/api/printers/{printer_id}/clear-queue')
+async def api_printer_clear_queue(
+        printer_id: UUID,
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_admin)
+):
+    """Очистка очереди печати принтера (Zebra ~JA / TSC CLS)."""
+    printer = await printer_crud.get(db, printer_id)
+    if not printer:
+        raise HTTPException(status_code=404, detail='Принтер не найден')
+
+    result = clear_printer_queue(
+        printer.ip_address, printer.port_address, printer.printer_type
+    )
+    if not result.get('success'):
+        raise HTTPException(status_code=502, detail=f'Не удалось очистить очередь: {result.get("error", "неизвестная ошибка")}')
+
+    logger.info(
+        f'Очередь печати принтера "{printer.name}" очищена '
+        f'(тип: {printer.printer_type}) пользователем {current_user.login}'
+    )
+    return {'success': True, 'printer_id': str(printer.id), 'message': 'Очередь печати очищена'}
+
+
+@router.post('/api/printers/{printer_id}/restart')
+async def api_printer_restart(
+        printer_id: UUID,
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_admin)
+):
+    """Перезапуск принтера (Zebra ~JR / TSC <ESC>!C)."""
+    printer = await printer_crud.get(db, printer_id)
+    if not printer:
+        raise HTTPException(status_code=404, detail='Принтер не найден')
+
+    result = restart_printer(
+        printer.ip_address, printer.port_address, printer.printer_type
+    )
+    if not result.get('success'):
+        raise HTTPException(status_code=502, detail=f'Не удалось перезапустить принтер: {result.get("error", "неизвестная ошибка")}')
+
+    logger.info(
+        f'Принтер "{printer.name}" перезапущен '
+        f'(тип: {printer.printer_type}) пользователем {current_user.login}'
+    )
+    return {'success': True, 'printer_id': str(printer.id), 'message': 'Команда перезапуска отправлена'}

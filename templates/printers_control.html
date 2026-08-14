@@ -1,0 +1,173 @@
+<!-- templates/printers_control.html -->
+{% extends "base.html" %}
+
+{% block title %}Управление принтерами{% endblock %}
+
+{% block css %}
+<link rel="stylesheet" href="/static/css/printers_control.css">
+{% endblock %}
+
+{% block header_title %}Управление принтерами{% endblock %}
+
+{% block subtitle %}
+<div class="subtitle">Статус принтеров, активные задания и команды управления</div>
+{% endblock %}
+
+{% block back_link %}
+<a class="link-button" href="/printers">← К списку принтеров</a>
+{% endblock %}
+
+{% block content %}
+<div class="control-container">
+    <div class="control-header">
+        <h1 class="control-title">🖨️ Контроль принтеров</h1>
+        <button class="refresh-btn" id="refreshAllBtn" onclick="refreshAllStatus()">🔄 Обновить статусы</button>
+    </div>
+
+    {% if printers %}
+    <div class="table-container">
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Принтер</th>
+                    <th>Статус</th>
+                    <th>Активные задания</th>
+                    <th>Действия</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for printer in printers %}
+                {% set st = printers_status.get(printer.id|string, {'state': 'offline', 'label': 'Недоступен', 'detail': ''}) %}
+                <tr>
+                    <td class="printer-cell">
+                        <strong>{{ printer.name }}</strong>
+                        <span class="printer-type-badge type-{{ printer.printer_type }}">{{ printer.printer_type|printer_type_label }}</span>
+                        <div class="printer-meta">
+                            {{ printer.ip_address }}:{{ printer.port_address }}
+                            · {{ printer.line.workshop.name if printer.line and printer.line.workshop else 'цех не указан' }}
+                            · {{ printer.line.name if printer.line else 'линия не указана' }}
+                        </div>
+                    </td>
+                    <td>
+                        <span class="status-badge status-{{ st.state }}" id="status-badge-{{ printer.id }}">
+                            <span id="status-label-{{ printer.id }}">{{ st.label }}</span>
+                        </span>
+                        <div class="status-detail" id="status-detail-{{ printer.id }}">
+                            {{ st.detail }}{% if st.raw %} <small>({{ st.raw }})</small>{% endif %}
+                        </div>
+                        <div class="status-detail" id="status-raw-{{ printer.id }}" style="display:none;"></div>
+                    </td>
+                    <td>
+                        {% set jobs = jobs_by_printer.get(printer.id|string, []) %}
+                        {% if jobs %}
+                            {% for job in jobs %}
+                            <div class="job-item">
+                                <strong>{{ job.product.name if job.product else 'Неизвестно' }}</strong>
+                                · партия {{ job.batch_number }} · {{ job.first_box }}–{{ job.last_box }} ({{ job.boxes_count }})
+                                <span class="job-progress">
+                                    {% if job.status == 'processing' %}⚙️ {{ job.printed_count }}/{{ job.boxes_count }}{% else %}⏳ ожидание{% endif %}
+                                </span>
+                            </div>
+                            {% endfor %}
+                        {% else %}
+                            <span class="no-jobs">нет</span>
+                        {% endif %}
+                    </td>
+                    <td class="actions-cell">
+                        <button class="cmd-btn primary" onclick="checkStatus('{{ printer.id }}')">🔄 Статус</button>
+                        <button class="cmd-btn danger-btn" onclick="clearQueue('{{ printer.id }}', '{{ printer.name|e }}')">🧹 Очистить</button>
+                        <button class="cmd-btn" onclick="restartPrinter('{{ printer.id }}', '{{ printer.name|e }}')">🔁 Перезапуск</button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div style="text-align:center; padding:60px 20px; color:#6c757d;">
+        <div style="font-size:64px; margin-bottom:20px;">🖨️</div>
+        <h3>Нет принтеров</h3>
+        <p>Добавьте принтер на странице управления принтерами.</p>
+        <a href="/printers" class="btn-submit" style="margin-top:20px;">📄 К списку принтеров</a>
+    </div>
+    {% endif %}
+</div>
+
+<div class="toast" id="toast"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function showToast(message, type = 'success') {
+    const toast = document.getElementById('toast');
+    toast.textContent = message;
+    toast.className = `toast ${type}`;
+    toast.style.display = 'block';
+    clearTimeout(showToast._timer);
+    showToast._timer = setTimeout(() => { toast.style.display = 'none'; }, 4000);
+}
+
+function setStatusBadge(printerId, state, label, detail, raw) {
+    const badge = document.getElementById(`status-badge-${printerId}`);
+    const labelEl = document.getElementById(`status-label-${printerId}`);
+    const detailEl = document.getElementById(`status-detail-${printerId}`);
+    if (badge) badge.className = `status-badge status-${state || 'offline'}`;
+    if (labelEl) labelEl.textContent = label || 'Недоступен';
+    if (detailEl) detailEl.innerHTML = (detail || '') + (raw ? ` <small>(${raw})</small>` : '');
+}
+
+function checkStatus(printerId) {
+    fetch(`/api/printers/${printerId}/status`, { method: 'POST' })
+        .then(r => r.ok ? r.json() : Promise.reject(r.status))
+        .then(data => {
+            const st = data.status || {};
+            setStatusBadge(printerId, st.state, st.label, st.detail, st.raw);
+        })
+        .catch(err => {
+            console.error('Ошибка проверки статуса:', err);
+            showToast(`Ошибка проверки статуса (${err})`, 'error');
+        });
+}
+
+function refreshAllStatus() {
+    const btn = document.getElementById('refreshAllBtn');
+    if (btn) btn.disabled = true;
+    const ids = Array.from(document.querySelectorAll('.status-badge')).map(b => b.id.replace('status-badge-', ''));
+    let done = 0;
+    ids.forEach(id => {
+        fetch(`/api/printers/${id}/status`, { method: 'POST' })
+            .then(r => r.ok ? r.json() : Promise.reject(r.status))
+            .then(data => {
+                const st = data.status || {};
+                setStatusBadge(id, st.state, st.label, st.detail, st.raw);
+            })
+            .catch(() => setStatusBadge(id, 'offline', 'Недоступен', 'Не удалось получить статус', ''))
+            .finally(() => { if (++done === ids.length && btn) btn.disabled = false; });
+    });
+    if (ids.length === 0 && btn) btn.disabled = false;
+}
+
+function clearQueue(printerId, name) {
+    if (!confirm(`Очистить очередь печати принтера "${name}"?\n\nНеотправленные/ожидающие задания будут удалены из очереди принтера.`)) return;
+    fetch(`/api/printers/${printerId}/clear-queue`, { method: 'POST' })
+        .then(r => r.ok ? r.json() : Promise.reject(r.status))
+        .then(data => showToast(data.message || 'Очередь очищена', 'success'))
+        .catch(err => showToast(`Не удалось очистить очередь: ${err}`, 'error'));
+}
+
+function restartPrinter(printerId, name) {
+    if (!confirm(`Перезапустить принтер "${name}"?\n\nПринтер будет перезагружен. Убедитесь, что активная печать завершена или прервана.`)) return;
+    fetch(`/api/printers/${printerId}/restart`, { method: 'POST' })
+        .then(r => r.ok ? r.json() : Promise.reject(r.status))
+        .then(data => showToast(data.message || 'Команда перезапуска отправлена', 'success'))
+        .catch(err => showToast(`Не удалось перезапустить: ${err}`, 'error'));
+}
+
+// Автообновление статусов каждые 20 секунд.
+setInterval(() => {
+    if (!document.getElementById('refreshAllBtn')?.disabled) {
+        refreshAllStatus();
+    }
+}, 20000);
+</script>
+{% endblock %}
