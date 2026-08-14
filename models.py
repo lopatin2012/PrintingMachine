@@ -154,7 +154,7 @@ class CodeTemplate(Base):
     print_code = Column(Text, nullable=False, comment='Код шаблона')
     name = Column(String(200), nullable=False, comment='Наименование')
     is_active = Column(Boolean, default=True, comment='Активен')
-    uip_include_batch = Column(Boolean, default=True, nullable=False, server_default='true', comment='Включать партию в УИП')
+    uip_include_batch = Column(Boolean, default=False, nullable=False, server_default='true', comment='Включать партию в УИП')
     created_at = Column(MoscowDateTime(), server_default=func.now(), comment='Дата добавления')
     edited_at = Column(MoscowDateTime(), server_default=func.now(), onupdate=func.now(), comment='Дата редактирования')
 
