@@ -20,17 +20,12 @@
             <div class="auth-buttons">
                 <!-- Блок авторизации -->
                 {% if user %}
-                    <div class="auth-status
-                    {% if user.role.is_admin %}admin
-                    {% elif user.role.is_editor %}editor
-                    {% else %}user{% endif %}">
+                    {% set role_class = 'admin' if user.role and user.role.is_admin else ('editor' if user.role and user.role.is_editor else 'user') %}
+                    <div class="auth-status {{ role_class }}">
                         <span class="role-indicator"></span>
                         <span>{{ user.login }}</span>
                         {% if user.role %}
-                            <span class="role-badge
-                            {% if user.role.is_admin %}admin
-                            {% elif user.role.is_editor %}editor
-                            {% else %}user{% endif %}">{{ user.role.name }}
+                            <span class="role-badge {{ role_class }}">{{ user.role.name }}
                             </span>
                         {% endif %}
                     </div>

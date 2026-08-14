@@ -5,11 +5,6 @@
 
 {% block css %}
 <link rel="stylesheet" href="/static/css/printers.css">
-<style>
-.printer-type-badge { display:inline-block; padding:4px 10px; border-radius:20px; font-size:13px; font-weight:600; }
-.printer-type-badge.type-zebra { background:#e8eaf6; color:#3d478a; }
-.printer-type-badge.type-tsc { background:#e0f2f1; color:#00695c; }
-</style>
 {% endblock %}
 
 {% block header_title %}Управление принтерами{% endblock %}
@@ -23,7 +18,7 @@
 {% endblock %}
 
 {% block content %}
-<div class="printers-container">
+<div class="content-container">
     <!-- Меню управления принтерами -->
     <div class="page-header">
         <h2>🖨️ Список принтеров</h2>

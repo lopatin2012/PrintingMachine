@@ -22,7 +22,7 @@
 <div
         data-prefill-product-id="{{ prefill_product_id or '' }}"
         data-prefill-printer-id=""
-        class="templates-container">
+        class="content-container">
 
     <!-- Заголовок страницы -->
     <div class="page-header">
@@ -539,7 +539,7 @@ function convertToYYMMDD(isoDate) {
 // ─── ФОРМА ДОБАВЛЕНИЯ / РЕДАКТИРОВАНИЯ ───────────────────────────────────────
 
 function openAddTemplateForm() {
-    const container = document.querySelector('.templates-container');
+    const container = document.querySelector('.content-container');
     const prefillProductId = container?.dataset.prefillProductId || '';
     const productSelect = document.getElementById('templateProduct');
 
