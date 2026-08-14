@@ -20,6 +20,10 @@ logger = logging.getLogger(__name__)
 PROGRESS_COMMIT_EVERY = 25
 # Как часто проверять статус принтера (паузу) во время печати — этикеток.
 STATUS_CHECK_EVERY = 25
+# Сколько раз подряд ждать недоступный принтер, прежде чем сдаться.
+MAX_UNREACHABLE_WAITS = 60
+# Сколько сетевых сбоев подряд при печати допускаем (переподключение), затем отказ.
+MAX_RECONNECT_ATTEMPTS = 10
 
 
 @dataclass
@@ -203,7 +207,15 @@ class PrinterQueue:
 
         prepared_code = replace_cyrillic_in_zpl(task.zpl_code)
 
-        for attempt in range(task.max_retries + 1):
+        # Печать, устойчивая к нестабильной сети:
+        #  - принтер недоступен — ждём с растущим backoff (не «убиваем» задание
+        #    через пару секунд), затем продолжаем;
+        #  - обрыв при печати — создаём новое подключение и продолжаем с места
+        #    остановки (task.printed_count хранится в памяти и точен).
+        unreachable_waits = 0
+        reconnect_count = 0
+
+        while True:
             if self._is_cancelled(task):
                 await self._mark_job_cancelled(task.job_id, db)
                 return
@@ -214,32 +226,52 @@ class PrinterQueue:
             )
 
             if not status.get('ok'):
-                wait = 2 ** attempt
-                logger.warning("Принтер %s недоступен, ожидание %dс...", printer_addr, wait)
+                # Принтер/сеть недоступны — ждём, не расходуя попыток печати.
+                reconnect_count = 0
+                unreachable_waits += 1
+                if unreachable_waits > MAX_UNREACHABLE_WAITS:
+                    raise RuntimeError(
+                        f"Принтер {printer_addr} недоступен слишком долго "
+                        f"(ждём более {MAX_UNREACHABLE_WAITS} интервалов)"
+                    )
+                wait = min(2 ** (unreachable_waits - 1), 30)
+                logger.warning(
+                    "Принтер %s недоступен, повтор через %dс (ожидание %d)...",
+                    printer_addr, wait, unreachable_waits,
+                )
                 await asyncio.sleep(wait)
                 continue
+
+            unreachable_waits = 0
 
             if status.get('paused'):
                 await self._wait_for_unpause(task, db, printer_addr)
                 if self._is_cancelled(task):
                     return
+                continue
 
             try:
                 await self._print_boxes(task, db, prepared_code, task.printed_count)
                 return
 
             except (socket.timeout, OSError, ConnectionError) as e:
-                logger.warning("Ошибка сети при печати %s: %s", job_id_str, e)
-                if attempt < task.max_retries and not self._is_cancelled(task):
-                    wait = 2 ** attempt
-                    logger.info("Повторная попытка через %dс...", wait)
-                    await asyncio.sleep(wait)
-                else:
-                    raise
-
-        raise RuntimeError(
-            f"Не удалось выполнить задание {job_id_str} после {task.max_retries + 1} попыток"
-        )
+                # Обрыв соединения при печати — переподключаемся и продолжаем.
+                reconnect_count += 1
+                if self._is_cancelled(task):
+                    await self._mark_job_cancelled(task.job_id, db)
+                    return
+                if reconnect_count > MAX_RECONNECT_ATTEMPTS:
+                    raise RuntimeError(
+                        f"Задание {job_id_str}: {MAX_RECONNECT_ATTEMPTS + 1} "
+                        f"сетевых сбоев подряд, печать прервана"
+                    ) from e
+                wait = min(2 ** reconnect_count, 30)
+                logger.warning(
+                    "Сетевая ошибка при печати %s (повтор %d): %s. "
+                    "Новое подключение через %dс...",
+                    job_id_str, reconnect_count, e, wait,
+                )
+                await asyncio.sleep(wait)
 
     async def _wait_for_unpause(self, task: PrintTask, db: AsyncSession, printer_addr: str):
         """Ждать снятия паузы (до 4 часов)."""
@@ -272,11 +304,20 @@ class PrinterQueue:
             logger.error("Задание %s не найдено в БД при печати", task.job_id)
             return
 
-        # Очистка очереди принтера перед отправкой (Zebra ~JA / TSC CLS).
+        # Очистка очереди принтера (Zebra ~JA / TSC CLS) — только при начале
+        # задания (start_index == 0). При переподключении после сетевого сбоя
+        # печать продолжается БЕЗ очистки, иначе теряются уже отправленные,
+        # но ещё не напечатанные этикетки.
         clear_cmd = b'CLS\r\n' if (task.printer_type or '').lower() == 'tsc' else b'~JA'
 
         with socket.create_connection((task.printer_ip, task.printer_port), timeout=10) as sock:
-            sock.sendall(clear_cmd)
+            if start_index == 0:
+                sock.sendall(clear_cmd)
+            else:
+                logger.info(
+                    "Задание %s: докачка с коробки %d без очистки очереди принтера",
+                    task.job_id, task.first_box + start_index,
+                )
 
             for i in range(start_index, task.boxes_count):
                 if self._is_cancelled(task):
