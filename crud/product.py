@@ -12,11 +12,11 @@ class ProductCRUD(BaseCRUD[Product, ProductCreate, ProductUpdate]):
     def __init__(self):
         super().__init__(Product)
 
-    async def get_by_code_1c(self, db: AsyncSession, code_1c: str) -> Product | None:
-        """Получить продукт по 1С"""
+    async def get_by_article(self, db: AsyncSession, article: str) -> Product | None:
+        """Получить продукт по артикулу"""
         result = await db.execute(
             select(self.model)
-            .where(func.lower(self.model.current_code_1c) == func.lower(code_1c))
+            .where(func.lower(self.model.article) == func.lower(article))
         )
 
         return result.scalar_one_or_none()

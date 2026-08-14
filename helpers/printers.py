@@ -10,6 +10,30 @@ from helper import CYRILLIC_CHARS
 
 logger = logging.getLogger(__name__)
 
+# Целевая длина УИП (DataMatrix): GTIN 14 + дата 6 + серийная часть 12 = 32 знака.
+UIP_TARGET_LENGTH = 32
+
+
+def process_uip_batch(batch: str, length: int = 12) -> str:
+    """
+    Подготовка партии для УИП (DataMatrix).
+
+    Дополняет партию нулями с конца до заданной длины. По умолчанию 12 —
+    максимальная длина серийного номера (внутреннего номера партии) в УИП
+    по требованиям Честного Знака. Партия длиннее `length` обрезается.
+
+    Пример: '1564' → '156400000000', 'A1/2026' → 'A1/2026000000'.
+
+    Отдельный метод нужен, чтобы в будущем менять логику взаимодействия
+    с партией (проверки, форматы, кодирование) в одном месте.
+    """
+    batch = (batch or '').strip()
+    if not batch:
+        return ''
+    if len(batch) >= length:
+        return batch[:length]
+    return batch + '0' * (length - len(batch))
+
 
 def check_printer_status(ip: str, port: int = 9100, timeout: float = 3.0) -> dict:
     """
@@ -99,7 +123,10 @@ def substitute_placeholders(
     marking_date: date,
     expiration_date: date,
     current_box: int,
-    gtin: str = ''
+    gtin: str = '',
+    gtin_unit: str = '',
+    article: str = '',
+    uip_include_batch: bool = True
 ) -> str:
     """
     Единая функция подстановки плейсхолдеров — используется и при рендере
@@ -114,7 +141,24 @@ def substitute_placeholders(
         {expiration_date_str}     — ДД.ММ.ГГ
         {batch_number_str}        — партия(ДД.ММ.ГГ)
         {batch_number}            — номер партии как есть
+
+    Плейсхолдеры УИП (DataMatrix, формат GS1):
+        {uip_gtin}                — GTIN единицы продукции (14 цифр)
+        {uip_marking_date}        — дата производства, ГГММДД
+        {uip_article}             — артикул продукта
+        {uip_batch}               — серийная часть УИП. Зависит от флага
+                                    uip_include_batch:
+                                      True  — партия (дополняется нулями);
+                                      False — нули вместо партии.
+                                    Серийная часть всегда 12 знаков
+                                    (артикул + партия/нули), поэтому УИП
+                                    всегда ровно 32 знака
+                                    (GTIN + дата + артикул + серийная часть).
     """
+
+    # Есть ли плейсхолдер артикула в шаблоне (проверяем до подстановки —
+    # после замены плейсхолдер уже не найти).
+    uip_article_in_template = '{uip_article}' in zpl_code
 
     # ── GS1-128: групповой GTIN ────────────────────────────────────────────────────────
     if gtin and gtin.strip():
@@ -127,12 +171,28 @@ def substitute_placeholders(
         zpl_code = zpl_code.replace('{gs1_gtin}', '')
         zpl_code = zpl_code.replace('{gs1_gtin_short}', '')
 
+    # ── UIP (DataMatrix): GTIN единицы продукции ────────────────────────────────────────
+    if gtin_unit and gtin_unit.strip():
+        clean_gtin_unit = gtin_unit.strip()
+        zpl_code = zpl_code.replace('{uip_gtin}', clean_gtin_unit)
+    else:
+        zpl_code = zpl_code.replace('{uip_gtin}', '')
+
+    # ── UIP (DataMatrix): артикул продукта ─────────────────────────────────────────────
+    if article and article.strip():
+        zpl_code = zpl_code.replace('{uip_article}', article.strip())
+    else:
+        zpl_code = zpl_code.replace('{uip_article}', '')
+
     # ── GS1-128: даты ────────────────────────────────────────────────────────
     gs1_marking = marking_date.strftime('%y%m%d')
     gs1_expiration = expiration_date.strftime('%y%m%d')
     zpl_code = zpl_code.replace('{gs1_128_marking_date}', gs1_marking)
     zpl_code = zpl_code.replace('{gs1_128_expiry_date}', gs1_expiration) # основное
     zpl_code = zpl_code.replace('{gs1_128_expiration_date}', gs1_expiration) # alias
+
+    # ── UIP (DataMatrix): дата производства (ГГММДД) ──────────────────────────
+    zpl_code = zpl_code.replace('{uip_marking_date}', gs1_marking)
 
     # ── GS1-128: партия. Указывается дата производства.
     gs1_party = marking_date.strftime('%d%m%y')
@@ -142,6 +202,23 @@ def substitute_placeholders(
 
     zpl_code = zpl_code.replace('{gs1_128_batch}', gs1_party) # основное
     zpl_code = zpl_code.replace('{gs1_128_batch_number}', gs1_party) # alias
+
+    # ── UIP (DataMatrix): серийная часть (партия или нули) ────────────────────
+    # Серийная часть УИП = 12 знаков (артикул + партия/нули), поэтому итоговый
+    # УИП всегда ровно 32 знака: GTIN(14) + дата(6) + артикул + серийная часть.
+    # Артикул учитывается только если его плейсхолдер реально есть в шаблоне.
+    article_length = len((article or '').strip()) if uip_article_in_template else 0
+    batch_slot = max(0, UIP_TARGET_LENGTH - 14 - 6 - article_length)
+
+    if uip_include_batch:
+        # С партией: партия, дополненная нулями до длины серийной части.
+        zpl_code = zpl_code.replace(
+            '{uip_batch}',
+            process_uip_batch(batch_number, length=batch_slot),
+        )
+    else:
+        # Без партии: вместо неё нули той же длины — длина УИП не меняется.
+        zpl_code = zpl_code.replace('{uip_batch}', '0' * batch_slot)
 
     # ── GS1-128: номер коробки ───────────────────────────────────────────────
     box_str = f"{current_box:05d}"

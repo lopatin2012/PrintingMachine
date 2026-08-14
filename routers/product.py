@@ -38,8 +38,9 @@ def _build_pagination_query(
         search_lower = search.lower().strip()
         query = query.where(
             (func.lower(Product.name).contains(search_lower)) |
-            (func.lower(Product.current_code_1c).contains(search_lower)) |
+            (func.lower(Product.article).contains(search_lower)) |
             (func.lower(Product.gtin).contains(search_lower)) |
+            (func.lower(Product.gtin_unit).contains(search_lower)) |
             (func.lower(Product.other_codes_1c).contains(search_lower) if Product.other_codes_1c is not None else text("false"))
         )
 
@@ -162,8 +163,9 @@ async def product_page(
 async def product_create(
         request: Request,
         name: str = Form(...),
-        current_code_1c: str = Form(...),
+        article: str = Form(...),
         gtin: str = Form(...),
+        gtin_unit: str = Form(None),
         other_codes_1c: str = Form(None),
         date_expiration: int = Form(...),
         db: AsyncSession = Depends(get_db),
@@ -171,8 +173,9 @@ async def product_create(
 ):
     """Добавить продукт"""
     name = name.strip()
-    current_code_1c = current_code_1c.strip()
+    article = article.strip()
     gtin = gtin.strip()
+    gtin_unit = (gtin_unit or '').strip() or None
 
     # Валидация наименования
     if len(name) < 2:
@@ -186,15 +189,15 @@ async def product_create(
             status_code=status.HTTP_303_SEE_OTHER
         )
 
-    # Валидация кода 1С
-    if len(current_code_1c) < 1:
+    # Валидация артикула
+    if len(article) < 1:
         return RedirectResponse(
-            url='/products?error=Код 1С обязателен',
+            url='/products?error=Артикул обязателен',
             status_code=status.HTTP_303_SEE_OTHER
         )
-    if len(current_code_1c) > 50:
+    if len(article) > 50:
         return RedirectResponse(
-            url='/products?error=Код 1С не должен превышать 50 символов',
+            url='/products?error=Артикул не должен превышать 50 символов',
             status_code=status.HTTP_303_SEE_OTHER
         )
 
@@ -205,6 +208,13 @@ async def product_create(
             status_code=status.HTTP_303_SEE_OTHER
         )
 
+    # Валидация GTIN единицы продукции (опционально, 13-14 цифр)
+    if gtin_unit and (not gtin_unit.isdigit() or len(gtin_unit) not in (13, 14)):
+        return RedirectResponse(
+            url='/products?error=GTIN единицы продукции должен содержать 13 или 14 цифр',
+            status_code=status.HTTP_303_SEE_OTHER
+        )
+
     # Валидация срока годности
     if date_expiration < 0 or date_expiration > 3650:
         return RedirectResponse(
@@ -212,14 +222,14 @@ async def product_create(
             status_code=status.HTTP_303_SEE_OTHER
         )
 
-    # Проверка уникальности кода 1С
+    # Проверка уникальности артикула
     result = await db.execute(
-        select(Product).where(func.lower(Product.current_code_1c) == func.lower(current_code_1c))
+        select(Product).where(func.lower(Product.article) == func.lower(article))
     )
     existing_by_code = result.scalar_one_or_none()
     if existing_by_code:
         return RedirectResponse(
-            url=f'/products?error=Продукт с кодом 1С "{current_code_1c}" уже существует',
+            url=f'/products?error=Продукт с артикулом "{article}" уже существует',
             status_code=status.HTTP_303_SEE_OTHER
         )
 
@@ -234,6 +244,18 @@ async def product_create(
             status_code=status.HTTP_303_SEE_OTHER
         )
 
+    # Проверка уникальности GTIN единицы продукции
+    if gtin_unit:
+        result = await db.execute(
+            select(Product).where(func.lower(Product.gtin_unit) == func.lower(gtin_unit))
+        )
+        existing_by_gtin_unit = result.scalar_one_or_none()
+        if existing_by_gtin_unit:
+            return RedirectResponse(
+                url=f'/products?error=Продукт с GTIN единицы "{gtin_unit}" уже существует',
+                status_code=status.HTTP_303_SEE_OTHER
+            )
+
     # Очистка других кодов
     if other_codes_1c:
         other_codes_1c = other_codes_1c.strip() or None
@@ -241,16 +263,17 @@ async def product_create(
     # Создание продукта
     product_data = ProductCreate(
         name=name,
-        current_code_1c=current_code_1c,
+        article=article,
         gtin=gtin,
+        gtin_unit=gtin_unit,
         other_codes_1c=other_codes_1c,
         date_expiration=date_expiration
     )
     product = await product_crud.create(db, product_data)
 
     logger.info(
-        f'Продукт "{name}" (код 1С: {current_code_1c},'
-        f' GTIN: {gtin}) создан пользователем {current_user.login}'
+        f'Продукт "{name}" (артикул: {article},'
+        f' GTIN: {gtin}, GTIN единицы: {gtin_unit}) создан пользователем {current_user.login}'
     )
 
     return RedirectResponse(
@@ -263,8 +286,9 @@ async def product_update(
         product_id: UUID,
         request: Request,
         name: str = Form(...),
-        current_code_1c: str = Form(...),
+        article: str = Form(...),
         gtin: str = Form(...),
+        gtin_unit: str = Form(None),
         other_codes_1c: str = Form(None),
         date_expiration: int = Form(...),
         db: AsyncSession = Depends(get_db),
@@ -280,8 +304,9 @@ async def product_update(
         )
 
     name = name.strip()
-    current_code_1c = current_code_1c.strip()
+    article = article.strip()
     gtin = gtin.strip()
+    gtin_unit = (gtin_unit or '').strip() or None
 
     # Валидация наименования
     if len(name) < 2:
@@ -295,15 +320,15 @@ async def product_update(
             status_code=status.HTTP_303_SEE_OTHER
         )
 
-    # Валидация кода 1С
-    if len(current_code_1c) < 1:
+    # Валидация артикула
+    if len(article) < 1:
         return RedirectResponse(
-            url='/products?error=Код 1С обязателен',
+            url='/products?error=Артикул обязателен',
             status_code=status.HTTP_303_SEE_OTHER
         )
-    if len(current_code_1c) > 50:
+    if len(article) > 50:
         return RedirectResponse(
-            url='/products?error=Код 1С не должен превышать 50 символов',
+            url='/products?error=Артикул не должен превышать 50 символов',
             status_code=status.HTTP_303_SEE_OTHER
         )
 
@@ -314,6 +339,13 @@ async def product_update(
             status_code=status.HTTP_303_SEE_OTHER
         )
 
+    # Валидация GTIN единицы продукции (опционально, 13-14 цифр)
+    if gtin_unit and (not gtin_unit.isdigit() or len(gtin_unit) not in (13, 14)):
+        return RedirectResponse(
+            url='/products?error=GTIN единицы продукции должен содержать 13 или 14 цифр',
+            status_code=status.HTTP_303_SEE_OTHER
+        )
+
     # Валидация срока годности
     if date_expiration < 0 or date_expiration > 3650:
         return RedirectResponse(
@@ -321,17 +353,17 @@ async def product_update(
             status_code=status.HTTP_303_SEE_OTHER
         )
 
-    # Проверка уникальности кода 1С (исключая текущий продукт)
+    # Проверка уникальности артикула (исключая текущий продукт)
     result = await db.execute(
         select(Product).where(
-            func.lower(Product.current_code_1c) == func.lower(current_code_1c),
+            func.lower(Product.article) == func.lower(article),
             Product.id != product_id
         )
     )
     existing_by_code = result.scalar_one_or_none()
     if existing_by_code:
         return RedirectResponse(
-            url=f'/products?error=Продукт с кодом 1С "{current_code_1c}" уже существует',
+            url=f'/products?error=Продукт с артикулом "{article}" уже существует',
             status_code=status.HTTP_303_SEE_OTHER
         )
 
@@ -349,6 +381,21 @@ async def product_update(
             status_code=status.HTTP_303_SEE_OTHER
         )
 
+    # Проверка уникальности GTIN единицы продукции (исключая текущий продукт)
+    if gtin_unit:
+        result = await db.execute(
+            select(Product).where(
+                func.lower(Product.gtin_unit) == func.lower(gtin_unit),
+                Product.id != product_id
+            )
+        )
+        existing_by_gtin_unit = result.scalar_one_or_none()
+        if existing_by_gtin_unit:
+            return RedirectResponse(
+                url=f'/products?error=Продукт с GTIN единицы "{gtin_unit}" уже существует',
+                status_code=status.HTTP_303_SEE_OTHER
+            )
+
     # Очистка других кодов
     if other_codes_1c:
         other_codes_1c = other_codes_1c.strip() or None
@@ -356,8 +403,9 @@ async def product_update(
     # Обновление продукта
     product_data = ProductUpdate(
         name=name,
-        current_code_1c=current_code_1c,
+        article=article,
         gtin=gtin,
+        gtin_unit=gtin_unit,
         other_codes_1c=other_codes_1c,
         date_expiration=date_expiration
     )

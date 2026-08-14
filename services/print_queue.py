@@ -28,6 +28,9 @@ class PrintTask:
     first_box: int
     boxes_count: int
     gtin: str = ''
+    gtin_unit: str = ''
+    article: str = ''
+    uip_include_batch: bool = True
     retries: int = 0
     max_retries: int = 10
     created_at: datetime = field(default_factory=datetime.now)
@@ -268,6 +271,9 @@ class PrinterQueue:
                     expiration_date=task.expiration_date,
                     current_box=current_box,
                     gtin=task.gtin,
+                    gtin_unit=task.gtin_unit,
+                    article=task.article,
+                    uip_include_batch=task.uip_include_batch,
                 )
                 send_zpl_safely(sock, box_zpl.encode('utf-8'))
 

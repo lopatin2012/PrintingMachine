@@ -84,6 +84,7 @@ async def template_create(
         printer_id: UUID = Form(...),
         print_code: str = Form(...),
         is_active: bool = Form(True),
+        uip_include_batch: bool = Form(False),
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_admin),
         endpoint: str='/templates'
@@ -162,7 +163,8 @@ async def template_create(
         product_id=product_id,
         printer_id=printer_id,
         print_code=print_code,
-        is_active=is_active
+        is_active=is_active,
+        uip_include_batch=uip_include_batch
     )
     template = await template_crud.create(db, template_data)
 
@@ -177,10 +179,13 @@ async def template_create(
             'name': template.name,
             'product_id': str(template.product_id),
             'product_gtin': str(product.gtin),
+            'product_gtin_unit': product.gtin_unit or '',
+            'product_article': product.article or '',
             'printer_id': str(template.printer_id),
             'product_name': product.name,
             'printer_name': printer.name,
             'is_active': template.is_active,
+            'uip_include_batch': bool(template.uip_include_batch),
             'print_code': template.print_code,
             'created_at': template.created_at.isoformat() if hasattr(template, 'created_at') else None,
         }
@@ -203,6 +208,7 @@ async def template_update(
         product_id: UUID = Form(...),
         printer_id: UUID = Form(...),
         print_code: str = Form(...),
+        uip_include_batch: bool = Form(False),
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_admin),
         endpoint: str = '/templates'
@@ -284,6 +290,7 @@ async def template_update(
         product_id=product_id,
         printer_id=printer_id,
         print_code=print_code,
+        uip_include_batch=uip_include_batch,
     )
     updated = await template_crud.update(db, template_id, template_data)
 
@@ -297,6 +304,7 @@ async def template_update(
                 'product_id': str(updated.product_id),
                 'printer_id': str(updated.printer_id),
                 'is_active': updated.is_active,
+                'uip_include_batch': bool(updated.uip_include_batch),
                 'updated_at': updated.updated_at.isoformat() if hasattr(updated, 'updated_at') else None,
             }
         }
@@ -557,6 +565,7 @@ async def get_templates_by_product(
             "id": str(t.id),
             "name": t.name,
             "is_active": t.is_active,
+            "uip_include_batch": bool(t.uip_include_batch),
             "printer_name": t.printer.name if t.printer else "Неизвестный принтер",
             "created_at": t.created_at.isoformat()
         }
@@ -581,6 +590,9 @@ async def render_template_preview(
         first_box: int = Form(1),
         current_box: int = Form(1),
         gtin: str = Form(''),
+        gtin_unit: str = Form(''),
+        article: str = Form(''),
+        uip_include_batch: bool = Form(True),
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_user)
 ):
@@ -623,7 +635,10 @@ async def render_template_preview(
             marking_date=marking_dt,
             expiration_date=expiration_dt,
             current_box=current_box,
-            gtin=gtin
+            gtin=gtin,
+            gtin_unit=gtin_unit,
+            article=article,
+            uip_include_batch=uip_include_batch,
         )
 
         # Добавляем ^XZ если отсутствует (обязательная команда завершения этикетки ZPL)

@@ -114,13 +114,15 @@
                     data-id="{{ template.id }}"
                     data-product-id="{{ template.product_id }}"
                     data-product-gtin="{{ template.product.gtin if template.product else '' }}"
-                    data-product-code-1c="{{ template.product.current_code_1c if template.product and template.product.current_code_1c else '' }}"
+                    data-product-gtin-unit="{{ template.product.gtin_unit if template.product and template.product.gtin_unit else '' }}"
+                    data-product-article="{{ template.product.article if template.product and template.product.article else '' }}"
+                    data-uip-include-batch="{{ 'true' if template.uip_include_batch else 'false' }}"
                     data-printer-id="{{ template.printer_id }}"
                     data-status="{{ 'active' if template.is_active else 'inactive' }}"
                     data-print-code="{{ template.print_code|e }}">
                 <td>{{ loop.index }}</td>
                 <td>
-                    <strong class="template-name">{{ template.name }} {{ template.product.gtin }}</strong>
+                    <strong class="template-name">{{ template.name }}</strong>
                     <div class="template-type">
                         {% if template.print_code and template.print_code.startswith('^XA') %}
                         <span class="type-badge zpl">ZPL</span>
@@ -133,7 +135,13 @@
                 </td>
                 <td>
                     {% if template.product %}
-                    <span class="product-badge">{{ template.product.name }} {{ template.product.current_code_1c }}</span>
+                    <span class="product-badge">{{ template.product.name }} {{ template.product.article }}</span>
+                    <div class="template-meta" style="font-size:12px;color:#666;margin-top:4px;">
+                        <div>GTIN (группа): {{ template.product.gtin }}</div>
+                        {% if template.product.gtin_unit %}
+                        <div>GTIN (единица): {{ template.product.gtin_unit }}</div>
+                        {% endif %}
+                    </div>
                     {% else %}
                     <span class="product-badge unknown">Без продукта</span>
                     {% endif %}
@@ -155,7 +163,6 @@
                 <td>{{ template.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
                 {% if user and user.role and (user.role.is_admin or user.role.is_editor) %}
                 <td class="actions-cell">
-                    <div>{{ template.product_gtin }}</div>
                     <button class="table-btn edit-btn"
                             data-template-id="{{ template.id }}"
                             onclick='editTemplateFromRow(this, {{ template.id|string|tojson|safe }}, {{ template.name|tojson|safe }})'>
@@ -198,6 +205,8 @@
                     <form id="templateForm" method="post" action="/templates">
                         <input class="hidden" id="templateId" name="id">
                         <input class="hidden" id="productGtin" name="gtin">
+                        <input class="hidden" id="productGtinUnit" name="gtin_unit">
+                        <input class="hidden" id="productArticle" name="article">
 
                         <!-- 📋 Скроллируемая область с полями -->
                         <div class="form-fields-scroll">
@@ -221,7 +230,7 @@
                                         <input type="text"
                                                class="select-search-input"
                                                id="productSearchInput"
-                                               placeholder="Название, код 1С или GTIN (групп)..."
+                                               placeholder="Название, артикул, GTIN групповой упаковки..."
                                                autocomplete="off">
                                         <span class="select-search-icon">🔍</span>
                                     </div>
@@ -233,12 +242,14 @@
                                         <option value="">Выберите продукт</option>
                                         {% for product in products %}
                                         <option value="{{ product.id }}"
-                                                title="{{ product.name }} | GTIN: {{ product.gtin }} | Код 1С: {{ product.current_code_1c }}"
+                                                title="{{ product.name }} | GTIN (группа): {{ product.gtin }}{% if product.gtin_unit %} | GTIN (единица): {{ product.gtin_unit }}{% endif %} | Артикул: {{ product.article }}"
                                                 data-product-gtin="{{ product.gtin }}"
-                                                data-searchable="{{ product.name|lower }} {{ product.current_code_1c|lower }} {{ product.gtin|lower }}"
+                                                data-product-gtin-unit="{{ product.gtin_unit or '' }}"
+                                                data-product-article="{{ product.article }}"
+                                                data-searchable="{{ product.name|lower }} {{ product.article|lower }} {{ product.gtin|lower }} {{ product.gtin_unit|lower if product.gtin_unit else '' }}"
                                                 {% if product.id|string == request.query_params.get('product_id')|string %}selected{% endif %}
                                         >
-                                            {{ product.name }} (GTIN: {{ product.gtin }})
+                                            {{ product.name }} (GTIN: {{ product.gtin }}{% if product.gtin_unit %}, ед.: {{ product.gtin_unit }}{% endif %})
                                         </option>
                                         {% endfor %}
                                     </select>
@@ -297,6 +308,14 @@
                                 <small class="form-hint">
                                     <a href="#" class="syntax-help" onclick="showSyntaxHelp(event)">Справка по синтаксису</a>
                                 </small>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="checkbox-label" for="templateUipIncludeBatch">
+                                    <input type="checkbox" id="templateUipIncludeBatch" name="uip_include_batch" value="true" checked>
+                                    <span>Включать партию в УИП (DataMatrix)</span>
+                                </label>
+                                <small class="form-hint">Если выключено — вместо партии в УИП идут нули, а УИП добивается до 32 знаков (GTIN единицы + дата + артикул сохраняются)</small>
                             </div>
                         </div>
 
@@ -535,6 +554,8 @@ function openAddTemplateForm() {
     document.getElementById('templateProduct').value = '';
     document.getElementById('templatePrinter').value = '';
     document.getElementById('templateCode').value = '';
+    const uipChk = document.getElementById('templateUipIncludeBatch');
+    if (uipChk) uipChk.checked = true;  // по умолчанию партия в УИП включена
     document.getElementById('templateFormModal').classList.remove('hidden');
 
     // Прокрутка к началу формы (сброс скролла полей)
@@ -558,7 +579,7 @@ function openAddTemplateForm() {
     setTimeout(() => document.getElementById('templateName').focus(), 300);
 }
 
-function editTemplate(id, name, productId, productGtin, printerId, code) {
+function editTemplate(id, name, productId, productGtin, productGtinUnit, productArticle, uipIncludeBatch, printerId, code) {
     document.getElementById('formTitle').textContent = '✏️ Редактировать шаблон';
     document.getElementById('formSubmitText').textContent = 'Сохранить изменения';
     document.getElementById('templateForm').action = `/templates/${id}`;
@@ -566,7 +587,13 @@ function editTemplate(id, name, productId, productGtin, printerId, code) {
     document.getElementById('templateName').value = name?.trim() || '';
     document.getElementById('templateProduct').value = productId || '';
     document.getElementById('productGtin').value = productGtin.trim() || '';
+    document.getElementById('productGtinUnit').value = (productGtinUnit || '').trim();
+    document.getElementById('productArticle').value = (productArticle || '').trim();
     document.getElementById('templatePrinter').value = printerId || '';
+
+    // Флаг «партия в УИП» из шаблона.
+    const uipChk = document.getElementById('templateUipIncludeBatch');
+    if (uipChk) uipChk.checked = uipIncludeBatch !== false && uipIncludeBatch !== 'false';
 
     console.log(productGtin);
 
@@ -701,13 +728,17 @@ function renderPreviewWithParams() {
     }
 
     const gtin = document.getElementById('productGtin')?.value.trim();
+    const gtinUnit = document.getElementById('productGtinUnit')?.value.trim();
+    const article = document.getElementById('productArticle')?.value.trim();
+    const uipChk = document.getElementById('templateUipIncludeBatch');
+    const uipIncludeBatch = uipChk ? (uipChk.checked ? 'true' : 'false') : 'true';
 
     // Читаем 3 поля
     const markingRaw  = (document.getElementById('previewMarkingDate')?.value || '').trim();
     const batchNumber = (document.getElementById('previewBatch')?.value || '01').trim();
     const boxNumber   = parseInt(document.getElementById('previewBoxNumber')?.value || '1');
 
-    console.log(gtin);
+    console.log(gtin, gtinUnit);
 
     // Валидация: если нет GTIN — предупреждаем
     if (!gtin) {
@@ -734,6 +765,9 @@ function renderPreviewWithParams() {
             first_box: String(boxNumber),
             current_box: String(boxNumber),
             gtin: gtin,
+            gtin_unit: gtinUnit,
+            article: article,
+            uip_include_batch: uipIncludeBatch,
 
         })
     })
@@ -1082,7 +1116,10 @@ function setupFormValidation() {
                     printer_id: printerId,
                     product_name: productSelect.options[productSelect.selectedIndex]?.text.split(' (')[0] || '',
                     printer_name: printerSelect.options[printerSelect.selectedIndex]?.text.split(' (')[0] || '',
-                    print_code: code
+                    print_code: code,
+                    uip_include_batch: document.getElementById('templateUipIncludeBatch')?.checked ?? true,
+                    product_gtin_unit: document.getElementById('productGtinUnit')?.value || '',
+                    product_article: document.getElementById('productArticle')?.value || '',
                 });
             } else {
                 // Для нового шаблона — перезагрузить страницу или добавить строку через AJAX
@@ -1152,6 +1189,9 @@ function updateTableRow(templateId, data) {
     // Обновляем data-атрибуты для фильтров и предпросмотра
     if (data.product_id) row.dataset.productId = data.product_id;
     if (data.product_gtin !== undefined) row.dataset.gtin = data.product_gtin;
+    if (data.product_gtin_unit !== undefined) row.dataset.productGtinUnit = data.product_gtin_unit;
+    if (data.product_article !== undefined) row.dataset.productArticle = data.product_article;
+    if (data.uip_include_batch !== undefined) row.dataset.uipIncludeBatch = data.uip_include_batch ? 'true' : 'false';
     if (data.printer_id) row.dataset.printerId = data.printer_id;
     if (data.is_active !== undefined) row.dataset.status = data.is_active ? 'active' : 'inactive';
     if (data.print_code) row.dataset.printCode = data.print_code;
@@ -1216,7 +1256,9 @@ function createTableRow(template) {
 <tr data-id="${template.id}"
     data-product-id="${template.product_id || ''}"
     data-product-gtin="${template.product_gtin || ''}"
-    data-product-code-1c="${template.product_code_1c?.toString() || ''}"
+    data-product-gtin-unit="${template.product_gtin_unit || ''}"
+    data-product-article="${template.product_article || ''}"
+    data-uip-include-batch="${template.uip_include_batch ? 'true' : 'false'}"
     data-printer-id="${template.printer_id || ''}"
     data-status="${statusClass}"
     data-print-code="${safePrintCode}">
@@ -1254,17 +1296,23 @@ function createTableRow(template) {
 function setupProductGtinSync() {
     const productSelect = document.getElementById('templateProduct');
     const gtinInput = document.getElementById('productGtin');
+    const gtinUnitInput = document.getElementById('productGtinUnit');
+    const articleInput = document.getElementById('productArticle');
     if (!productSelect || !gtinInput) return;
 
     const updateGtin = () => {
         const selectedOption = productSelect.options[productSelect.selectedIndex];
         if (!selectedOption || !selectedOption.value) {
             gtinInput.value = '';
+            if (gtinUnitInput) gtinUnitInput.value = '';
+            if (articleInput) articleInput.value = '';
             return;
         }
         // Берём data-product-gtin из выбранной опции
         gtinInput.value = selectedOption.dataset.productGtin || '';
-        console.log('GTIN обновлён:', gtinInput.value);
+        if (gtinUnitInput) gtinUnitInput.value = selectedOption.dataset.productGtinUnit || '';
+        if (articleInput) articleInput.value = selectedOption.dataset.productArticle || '';
+        console.log('GTIN обновлён:', gtinInput.value, '| единица:', gtinUnitInput ? gtinUnitInput.value : '', '| артикул:', articleInput ? articleInput.value : '');
     };
 
     productSelect.addEventListener('change', updateGtin);
@@ -1281,12 +1329,14 @@ function editTemplateFromRow(button, id, name) {
 
     const code = row.dataset.printCode || '';
     const productId = row.dataset.productId || '';
-    // читаем оба варианта атрибута для совместимости
     const productGtin = row.dataset.productGtin || '';
+    const productGtinUnit = row.dataset.productGtinUnit || '';
+    const productArticle = row.dataset.productArticle || '';
+    const uipIncludeBatch = row.dataset.uipIncludeBatch;
     const printerId = row.dataset.printerId || '';
     const isActive = row.dataset.status === 'active';
 
-    editTemplate(id, name, productId, productGtin, printerId, code);
+    editTemplate(id, name, productId, productGtin, productGtinUnit, productArticle, uipIncludeBatch, printerId, code);
 
     if (window.innerWidth < 1200) {
         document.querySelector('.form-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });

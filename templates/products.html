@@ -77,8 +77,9 @@
                 <tr>
                     <th>№</th>
                     <th>Наименование</th>
-                    <th>Код 1С</th>
+                    <th>Артикул</th>
                     <th>Групповой GTIN</th>
+                    <th>GTIN единицы</th>
                     <th>Срок годности</th>
                     <th>Шаблонов</th>
                     <th>Дата создания</th>
@@ -91,8 +92,9 @@
                 {% if products %}
                 {% for product in products %}
                 <tr data-gtin="{{ product.gtin }}"
+                    data-gtin-unit="{{ product.gtin_unit or '' }}"
                     data-expiration="{{ product.date_expiration }}"
-                    data-search="{{ product.name|lower }} {{ product.current_code_1c|lower }} {{ product.gtin|lower }}">
+                    data-search="{{ product.name|lower }} {{ product.article|lower }} {{ product.gtin|lower }} {{ product.gtin_unit|lower if product.gtin_unit else '' }}">
                     {# Нумерация с учётом пагинации #}
                     <td>{{ (page - 1) * per_page + loop.index }}</td>
                     <td>
@@ -102,10 +104,17 @@
                         {% endif %}
                     </td>
                     <td class="code-cell">
-                        <span class="code-badge primary">{{ product.current_code_1c }}</span>
+                        <span class="code-badge primary">{{ product.article }}</span>
                     </td>
                     <td class="code-cell">
-                        <span class="code-badge gtin">{{ product.gtin }}</span>
+                        <span class="code-badge gtin" title="{{ product.gtin }}">{{ product.gtin }}</span>
+                    </td>
+                    <td class="code-cell">
+                        {% if product.gtin_unit %}
+                        <span class="code-badge gtin-unit" title="{{ product.gtin_unit }}">{{ product.gtin_unit }}</span>
+                        {% else %}
+                        <span class="code-badge muted">—</span>
+                        {% endif %}
                     </td>
                     <td>
                         <span class="expiration-badge
@@ -124,7 +133,7 @@
                     {% if user and user.role and user.role.is_admin %}
                     <td class="actions-cell">
                         <button class="table-btn edit-btn"
-                                onclick='editProduct({{ product.id|string|tojson|safe }}, {{ product.name|tojson|safe }}, {{ product.current_code_1c|tojson|safe }}, {{ product.gtin|tojson|safe }}, {{ product.other_codes_1c|tojson|safe if product.other_codes_1c else "null"|tojson|safe }}, {{ product.date_expiration }})'>
+                                onclick='editProduct({{ product.id|string|tojson|safe }}, {{ product.name|tojson|safe }}, {{ product.article|tojson|safe }}, {{ product.gtin|tojson|safe }}, {{ (product.gtin_unit or "")|tojson|safe }}, {{ product.other_codes_1c|tojson|safe if product.other_codes_1c else "null"|tojson|safe }}, {{ product.date_expiration }})'>
                             ✏️ Редактировать
                         </button>
                         <button class="table-btn delete-btn"
@@ -235,21 +244,22 @@
                 </div>
 
                 <div class="form-group">
-                    <label for="productCode1C" class="form-label">
-                        <span class="label-icon">🔢</span>
-                        Текущий код 1С
+                    <label for="productArticle" class="form-label">
+                        <span class="label-icon">🏷️</span>
+                        Артикул
                     </label>
                     <div class="input-wrapper">
                         <input
                             type="text"
-                            id="productCode1C"
-                            name="current_code_1c"
+                            id="productArticle"
+                            name="article"
                             required
                             class="form-input"
                             placeholder="000000123456"
                             maxlength="50"
                         >
                     </div>
+                    <small class="form-hint">Используется в шаблоне через плейсхолдер {uip_article}</small>
                 </div>
 
                 <div class="form-group">
@@ -268,6 +278,24 @@
                             maxlength="50"
                         >
                     </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="productGtinUnit" class="form-label">
+                        <span class="label-icon">📦</span>
+                        GTIN единицы продукции (для УИП/DataMatrix)
+                    </label>
+                    <div class="input-wrapper">
+                        <input
+                            type="text"
+                            id="productGtinUnit"
+                            name="gtin_unit"
+                            class="form-input"
+                            placeholder="04601234567890 (необязательно)"
+                            maxlength="50"
+                        >
+                    </div>
+                    <small class="form-hint">Используется в шаблоне через плейсхолдер {uip_gtin}</small>
                 </div>
 
                 <div class="form-group">
@@ -346,22 +374,24 @@ function openAddProductForm() {
     document.getElementById('productForm').action = '/products';
     document.getElementById('productId').value = '';
     document.getElementById('productName').value = '';
-    document.getElementById('productCode1C').value = '';
+    document.getElementById('productArticle').value = '';
     document.getElementById('productGtin').value = '';
+    document.getElementById('productGtinUnit').value = '';
     document.getElementById('productOtherCodes').value = '';
     document.getElementById('productExpiration').value = '180';
     document.getElementById('productFormModal').classList.remove('hidden');
 }
 
 // Открыть форму редактирования
-function editProduct(id, name, code1c, gtin, otherCodes, expiration) {
+function editProduct(id, name, article, gtin, gtinUnit, otherCodes, expiration) {
     document.getElementById('formTitle').textContent = '✏️ Редактировать продукт';
     document.getElementById('formSubmitText').textContent = 'Сохранить изменения';
     document.getElementById('productForm').action = `/products/${id}`;
     document.getElementById('productId').value = id;
     document.getElementById('productName').value = name.trim();
-    document.getElementById('productCode1C').value = code1c.trim();
+    document.getElementById('productArticle').value = article.trim();
     document.getElementById('productGtin').value = gtin.trim();
+    document.getElementById('productGtinUnit').value = gtinUnit ? gtinUnit.trim() : '';
     document.getElementById('productOtherCodes').value = otherCodes && otherCodes !== 'null' ? otherCodes.trim() : '';
     document.getElementById('productExpiration').value = expiration;
     document.getElementById('productFormModal').classList.remove('hidden');
@@ -583,7 +613,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (form) {
         form.addEventListener('submit', function(e) {
             const name = document.getElementById('productName').value.trim();
-            const code1c = document.getElementById('productCode1C').value.trim();
+            const article = document.getElementById('productArticle').value.trim();
             const gtin = document.getElementById('productGtin').value.trim();
             const expiration = parseInt(document.getElementById('productExpiration').value) || 0;
 
@@ -602,18 +632,18 @@ document.addEventListener('DOMContentLoaded', function() {
                 return false;
             }
 
-            // Валидация кода 1С
-            if (code1c.length < 1) {
+            // Валидация артикула
+            if (article.length < 1) {
                 e.preventDefault();
-                alert('Код 1С обязателен');
-                document.getElementById('productCode1C').focus();
+                alert('Артикул обязателен');
+                document.getElementById('productArticle').focus();
                 return false;
             }
 
-            if (code1c.length > 50) {
+            if (article.length > 50) {
                 e.preventDefault();
-                alert('Код 1С не должен превышать 50 символов');
-                document.getElementById('productCode1C').focus();
+                alert('Артикул не должен превышать 50 символов');
+                document.getElementById('productArticle').focus();
                 return false;
             }
 
@@ -622,6 +652,15 @@ document.addEventListener('DOMContentLoaded', function() {
                 e.preventDefault();
                 alert('GTIN должен содержать 13 или 14 цифр (без пробелов и дефисов)');
                 document.getElementById('productGtin').focus();
+                return false;
+            }
+
+            // Валидация GTIN единицы продукции (опционально, 13-14 цифр)
+            const gtinUnit = document.getElementById('productGtinUnit').value.trim();
+            if (gtinUnit && !/^\d{13,14}$/.test(gtinUnit)) {
+                e.preventDefault();
+                alert('GTIN единицы продукции должен содержать 13 или 14 цифр (без пробелов и дефисов)');
+                document.getElementById('productGtinUnit').focus();
                 return false;
             }
 

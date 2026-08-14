@@ -55,12 +55,15 @@
         {% if products %}
         {% for product in products %}
         <div class="product-card"
-             data-search="{{ product.name|lower }} {{ product.current_code_1c|lower }} {{ product.gtin|lower }}">
+             data-search="{{ product.name|lower }} {{ product.article|lower }} {{ product.gtin|lower }} {{ product.gtin_unit|lower if product.gtin_unit else '' }}">
             <div class="product-header">
                 <h3 class="product-name" data-tooltip="{{ product.name|e }}">{{ product.name }}</h3>
                 <div class="product-codes">
-                    <span class="product-code-badge">1С: {{ product.current_code_1c }}</span>
-                    <span class="product-code-badge gtin">GTIN (группа): {{ product.gtin }}</span>
+                    <span class="product-code-badge">Артикул: {{ product.article }}</span>
+                    <span class="product-code-badge gtin" title="{{ product.gtin }}">GTIN (группа): {{ product.gtin }}</span>
+                    {% if product.gtin_unit %}
+                    <span class="product-code-badge gtin" title="{{ product.gtin_unit }}">GTIN (единица): {{ product.gtin_unit }}</span>
+                    {% endif %}
                 </div>
             </div>
             <div class="product-info">
@@ -74,7 +77,7 @@
                 </div>
             </div>
             <button class="btn-select-product"
-                    onclick="selectProduct('{{ product.id }}', '{{ product.name|e }}', '{{ product.gtin|e}}', {{ product.date_expiration }})">
+                    onclick="selectProduct('{{ product.id }}', '{{ product.name|e }}', '{{ product.gtin|e}}', '{{ product.gtin_unit|e if product.gtin_unit else '' }}', '{{ product.article|e if product.article else '' }}', {{ product.date_expiration }})">
                 🖨️ Печать этикеток
             </button>
         </div>
@@ -105,6 +108,8 @@
                     <form id="printForm" method="POST" action="/printing/start">
                         <input type="hidden" id="selectedProductId" name="product_id">
                         <input type="hidden" id="selectedGtin" name="gtin">
+                        <input type="hidden" id="selectedGtinUnit" name="gtin_unit">
+                        <input type="hidden" id="selectedArticle" name="article">
                         <input type="hidden" id="expirationDays" name="expiration_days">
 
                         <div class="form-row">
@@ -335,6 +340,7 @@ let tooltipHideTimer = null;   // Таймер задержки скрытия
 // ZPL текущего шаблона — сохраняется при loadTemplatePreview
 let currentZplCode    = null;
 let currentTemplateId = null;
+let currentUipIncludeBatch = true;  // флаг «партия в УИП» из шаблона
 
 // ─── ПЕРЕМЕННЫЕ ДЛЯ УПРАВЛЕНИЯ ПРЕДПРОСМОТРОМ ────────────────────────────────
 let previewRotation = 0;          // Текущий угол поворота (градусы)
@@ -387,9 +393,11 @@ function filterProducts(searchTerm) {
 
 // ─── ВЫБОР ПРОДУКТА ──────────────────────────────────────────────────────────
 
-function selectProduct(productId, productName, productGtin, expirationDays) {
+function selectProduct(productId, productName, productGtin, productGtinUnit, productArticle, expirationDays) {
     document.getElementById('selectedProductId').value = productId;
     document.getElementById('selectedGtin').value = productGtin;
+    document.getElementById('selectedGtinUnit').value = productGtinUnit || '';
+    document.getElementById('selectedArticle').value = productArticle || '';
     document.getElementById('expirationDays').value = expirationDays;
     productExpirationDays = expirationDays;
     document.getElementById('printFormContainer').classList.remove('hidden');
@@ -455,6 +463,7 @@ function loadTemplates(templates) {
         opt.dataset.printerId = t.printer_id;
         opt.dataset.printerName = t.printer_name;
         opt.dataset.fullName = t.name;
+        opt.dataset.uipIncludeBatch = t.uip_include_batch !== false && t.uip_include_batch !== 'false';
 
         select.appendChild(opt);
     });
@@ -473,6 +482,8 @@ document.getElementById('templateSelect').addEventListener('change', function() 
 
     currentZplCode = selectedOption.dataset.printCode;
     currentTemplateId = this.value;
+    // Флаг «партия в УИП» берётся из шаблона (настройка шаблона, не печати).
+    currentUipIncludeBatch = selectedOption.dataset.uipIncludeBatch === 'true' || selectedOption.dataset.uipIncludeBatch === true;
 
     // Обновляем информационные карточки справа
     const nameEl = document.getElementById('templateInfoName');
@@ -587,6 +598,11 @@ function renderPreview({ useLiveData = false } = {}) {
 
     // gtin для печати и отображения.
     const gtin = document.getElementById('selectedGtin')?.value.trim();
+    const gtinUnit = document.getElementById('selectedGtinUnit')?.value.trim();
+    const article = document.getElementById('selectedArticle')?.value.trim();
+    // Флаг «партия в УИП».
+    // Флаг «партия в УИП» берётся из шаблона (настройка шаблона, не печати).
+    const uipIncludeBatch = currentUipIncludeBatch ? 'true' : 'false';
 
     // Обновляем плейсхолдер
     previewPlaceholder.innerHTML = `<div class="preview-spinner"></div><p>Генерация предпросмотра...</p>`;
@@ -666,6 +682,9 @@ function renderPreview({ useLiveData = false } = {}) {
             first_box:       firstBox,
             current_box:     firstBox,
             gtin:            gtin,
+            gtin_unit:       gtinUnit,
+            article:         article,
+            uip_include_batch: uipIncludeBatch,
         })
     })
     .then(r => {

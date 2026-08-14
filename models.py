@@ -126,9 +126,10 @@ class Product(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 
-    current_code_1c = Column(String(50), unique=True, nullable=False, comment='Текущий код 1С')
+    article = Column(String(50), unique=True, nullable=False, comment='Артикул (текущий код 1С)')
     name = Column(String(200), nullable=False, comment='Наименование')
-    gtin = Column(String(50), unique=True, nullable=False, comment='GTIN')
+    gtin = Column(String(50), unique=True, nullable=False, comment='GTIN групповой упаковки')
+    gtin_unit = Column(String(50), unique=True, nullable=True, comment='GTIN единицы продукции (для УИП/DataMatrix)')
     other_codes_1c = Column(Text, nullable=True, comment='Другие коды 1C')
     date_expiration = Column(Integer, nullable=False, comment='Срок годности в днях')
     created_at = Column(MoscowDateTime(), server_default=func.now())
@@ -138,7 +139,7 @@ class Product(Base):
     print_jobs = relationship('PrintJob', back_populates='product', lazy='selectin', cascade='all, delete-orphan')
 
     def __repr__(self):
-        return f'<Product(id={self.id}, name={self.name}, code_1c={self.current_code_1c})>'
+        return f'<Product(id={self.id}, name={self.name}, article={self.article})>'
 
 
 class CodeTemplate(Base):
@@ -153,6 +154,7 @@ class CodeTemplate(Base):
     print_code = Column(Text, nullable=False, comment='Код шаблона')
     name = Column(String(200), nullable=False, comment='Наименование')
     is_active = Column(Boolean, default=True, comment='Активен')
+    uip_include_batch = Column(Boolean, default=True, nullable=False, server_default='true', comment='Включать партию в УИП')
     created_at = Column(MoscowDateTime(), server_default=func.now(), comment='Дата добавления')
     edited_at = Column(MoscowDateTime(), server_default=func.now(), onupdate=func.now(), comment='Дата редактирования')
 

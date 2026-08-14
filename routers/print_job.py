@@ -112,6 +112,8 @@ async def start_printing(
         first_box: int = Form(...),
         last_box: int = Form(...),
         gtin: str = Form(''),
+        gtin_unit: str = Form(''),
+        article: str = Form(''),
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_user),
 ):
@@ -199,7 +201,10 @@ async def start_printing(
         first_box=first_box,
         boxes_count=boxes_count,
         max_retries=3,
-        gtin=gtin
+        gtin=gtin,
+        gtin_unit=gtin_unit.strip(),
+        article=article.strip(),
+        uip_include_batch=bool(template.uip_include_batch),
     )
 
     printer_queue = request.app.state.printer_queue
@@ -432,6 +437,7 @@ async def get_active_template_for_product(
                 if template.printer else ""
             ),
             "print_code": template.print_code,
+            "uip_include_batch": bool(template.uip_include_batch),
         }
     }
 
@@ -553,6 +559,7 @@ async def get_templates_for_product(
                 "printer_id": str(t.printer_id),
                 "printer_name": t.printer.name if t.printer else "Неизвестный принтер",
                 "print_code": t.print_code,
+                "uip_include_batch": bool(t.uip_include_batch),
             }
             for t in templates
         ]

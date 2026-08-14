@@ -2,6 +2,9 @@
 
 from logging.config import fileConfig
 
+import os
+from dotenv import load_dotenv
+
 from sqlalchemy import pool, engine_from_config, create_engine
 
 from alembic import context
@@ -24,6 +27,25 @@ if config.config_file_name is not None:
 # target_metadata = mymodel.Base.metadata
 target_metadata = Base.metadata
 
+
+def _get_database_url() -> str:
+    """URL базы данных из .env — та же БД, что использует приложение.
+
+    Alembic работает с синхронным драйвером, поэтому asyncpg заменяем на psycopg2.
+    """
+    load_dotenv()
+    env_url = os.getenv('DATABASE_URL')
+    if env_url:
+        return env_url.replace('+asyncpg', '+psycopg2')
+
+    user = os.getenv('DB_USER', 'postgres')
+    password = os.getenv('DB_PASSWORD', '')
+    host = os.getenv('DB_HOST', 'localhost')
+    port = os.getenv('DB_PORT', '5432')
+    dbname = os.getenv('DB_NAME', 'database')
+    return f'postgresql+psycopg2://{user}:{password}@{host}:{port}/{dbname}'
+
+
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
 # my_important_option = config.get_main_option("my_important_option")
@@ -42,7 +64,7 @@ def run_migrations_offline() -> None:
     script output.
 
     """
-    url = config.get_main_option("sqlalchemy.url")
+    url = _get_database_url()
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -64,7 +86,7 @@ def run_migrations_online() -> None:
 
     if connectable is None:
         connectable = create_engine(
-            config.get_main_option("sqlalchemy.url"),
+            _get_database_url(),
             poolclass=pool.NullPool,
         )
 
