@@ -40,6 +40,16 @@ logger = logging.getLogger(__name__)
 # Режим работы.
 IS_DEBUG = os.getenv("DEBUG", "True").lower() == "true"
 
+# Количество воркеров очереди печати (env PRINTER_WORKERS, по умолчанию 1).
+# Больше 1 — задания на разные принтеры выполняются параллельно;
+# задания на один и тот же принтер всегда строго последовательны (см. print_queue.py).
+def _get_printer_workers() -> int:
+    try:
+        workers = int(os.getenv('PRINTER_WORKERS', '1'))
+    except (TypeError, ValueError):
+        workers = 1
+    return max(1, workers)
+
 favicon_path = 'favicon.ico'
 
 # Очередь печати.
@@ -52,8 +62,13 @@ async def lifespan(app: FastAPI):
 
     logger.info('Запуск сервиса печати...')
 
-    printer_queue = PrinterQueue(db_getter=get_db, max_concurrent_printers=1)
-    await  printer_queue.start()
+    printer_workers = _get_printer_workers()
+    printer_queue = PrinterQueue(
+        db_getter=get_db,
+        max_concurrent_printers=printer_workers,
+    )
+    await printer_queue.start()
+    logger.info('Очередь печати запущена: %d воркер(а/ов)', printer_workers)
 
     app.state.printer_queue = printer_queue
 

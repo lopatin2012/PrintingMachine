@@ -48,6 +48,9 @@ class PrinterQueue:
         self._running = False
         self._max_concurrent = max_concurrent_printers
         self._active_tasks: dict[str, PrintTask] = {}
+        # Блокировки по принтерам (ip:port) — задания на один и тот же принтер
+        # выполняются строго последовательно, на разные — параллельно.
+        self._printer_locks: dict[str, asyncio.Lock] = {}
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -106,6 +109,19 @@ class PrinterQueue:
     def _is_cancelled(self, task: PrintTask) -> bool:
         return task.max_retries < 0
 
+    def _get_printer_lock(self, printer_key: str) -> asyncio.Lock:
+        """Блокировка на конкретный принтер (ip:port).
+
+        Гарантирует, что задания на один принтер не перемешают этикетки друг друга,
+        при этом задания на разные принтеры могут выполняться параллельно
+        (при наличии нескольких воркеров очереди).
+        """
+        lock = self._printer_locks.get(printer_key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._printer_locks[printer_key] = lock
+        return lock
+
     async def _get_db(self) -> tuple[AsyncSession, any]:
         gen = self.db_getter()
         db: AsyncSession = await gen.__anext__()
@@ -129,8 +145,11 @@ class PrinterQueue:
 
             db, gen = None, None
             try:
-                db, gen = await self._get_db()
-                await self._process_task(task, db)
+                printer_key = f"{task.printer_ip}:{task.printer_port}"
+                lock = self._get_printer_lock(printer_key)
+                async with lock:
+                    db, gen = await self._get_db()
+                    await self._process_task(task, db)
             except asyncio.CancelledError:
                 self.queue.put_nowait(task)
                 raise
