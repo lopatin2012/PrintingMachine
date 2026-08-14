@@ -2,6 +2,7 @@
 
 import logging
 from datetime import date, timedelta
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Depends, HTTPException, status, Form, Query
@@ -351,13 +352,34 @@ async def get_active_print_jobs(
 async def printing_history(
         request: Request,
         page: int = Query(1, ge=1),
+        user_id: Optional[str] = Query(None),
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_user)
 ):
-    """Полная история заданий пользователя с пагинацией."""
+    """История заданий печати с пагинацией.
+
+    Администратор видит задания всех пользователей (с фильтром по пользователю
+    через ?user_id=...), обычный пользователь — только свои.
+    """
     PAGE_SIZE = 25
+    is_admin = bool(current_user.role and current_user.role.is_admin)
+
+    # Фильтр: админ может выбрать пользователя, обычный пользователь — только себя.
+    # Пустое/некорректное значение user_id трактуем как «все пользователи».
+    if is_admin:
+        filter_user_id = None
+        if user_id:
+            try:
+                filter_user_id = UUID(user_id)
+            except (ValueError, AttributeError, TypeError):
+                filter_user_id = None
+    else:
+        filter_user_id = current_user.id
+
+    base_filter = [PrintJob.user_id == filter_user_id] if filter_user_id else []
+
     total_count = (await db.execute(
-        select(func.count(PrintJob.id)).where(PrintJob.user_id == current_user.id)
+        select(func.count(PrintJob.id)).where(*base_filter)
     )).scalar()
 
     total_pages = (total_count + PAGE_SIZE - 1) // PAGE_SIZE
@@ -366,17 +388,37 @@ async def printing_history(
 
     jobs = (await db.execute(
         select(PrintJob)
-        .where(PrintJob.user_id == current_user.id)
+        .where(*base_filter)
         .order_by(PrintJob.created_at.desc())
         .offset(offset).limit(PAGE_SIZE)
     )).scalars().all()
+
+    # Сводка по отфильтрованным заданиям.
+    total_jobs, total_boxes = (await db.execute(
+        select(
+            func.count(PrintJob.id),
+            func.coalesce(func.sum(PrintJob.boxes_count), 0),
+        ).where(*base_filter)
+    )).one()
+
+    # Список пользователей для фильтра (только для администратора).
+    users = []
+    if is_admin:
+        users = (await db.execute(
+            select(User).order_by(User.login)
+        )).scalars().all()
 
     return templates.TemplateResponse(
         'print_jobs_history.html',
         {
             'request': request,
             'user': current_user,
+            'is_admin': is_admin,
             'jobs': jobs,
+            'users': users,
+            'selected_user_id': str(filter_user_id) if filter_user_id else '',
+            'total_jobs': total_jobs,
+            'total_boxes': total_boxes,
             'page': page,
             'total_pages': total_pages,
             'total_count': total_count,

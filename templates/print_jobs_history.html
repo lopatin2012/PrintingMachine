@@ -172,6 +172,28 @@
         <a href="/printing" class="back-link">← Вернуться к печати</a>
     </div>
 
+    {% if is_admin %}
+    <!-- Фильтр по пользователю (для администратора) -->
+    <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;margin-bottom:16px;">
+        <form method="get" action="/printing/history" style="display:flex;gap:8px;align-items:center;">
+            <label for="userFilter" style="font-weight:600;color:#495057;">Пользователь:</label>
+            <select id="userFilter" name="user_id"
+                    onchange="if (this.value) { this.form.submit(); } else { window.location.href = '/printing/history'; }"
+                    style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:white;min-width:200px;">
+                <option value="">Все пользователи</option>
+                {% for u in users %}
+                <option value="{{ u.id }}" {% if selected_user_id == u.id|string %}selected{% endif %}>{{ u.login }}</option>
+                {% endfor %}
+            </select>
+            <noscript><button type="submit">Показать</button></noscript>
+        </form>
+        <div style="display:flex;gap:16px;font-size:14px;color:#495057;">
+            <span>📄 Заданий: <b>{{ total_jobs }}</b></span>
+            <span>📦 Коробок: <b>{{ total_boxes }}</b></span>
+        </div>
+    </div>
+    {% endif %}
+
     <div class="page-info">
         Показано {{ (page - 1) * page_size + 1 }}–{{ (page - 1) * page_size + jobs|length }}
         из {{ total_count }} заданий
@@ -183,6 +205,9 @@
             <thead>
                 <tr>
                     <th>Дата и время</th>
+                    {% if is_admin %}
+                    <th>Пользователь</th>
+                    {% endif %}
                     <th>Продукт</th>
                     <th>Партия</th>
                     <th>Коробки</th>
@@ -194,6 +219,9 @@
                 {% for job in jobs %}
                 <tr>
                     <td>{{ job.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+                    {% if is_admin %}
+                    <td>{{ job.user.login if job.user else 'Неизвестно' }}</td>
+                    {% endif %}
                     <td class="product-name">{{ job.product.name if job.product else 'Неизвестно' }}</td>
                     <td>{{ job.batch_number }}</td>
                     <td>{{ job.first_box }}–{{ job.last_box }} ({{ job.boxes_count }})</td>
@@ -219,12 +247,12 @@
     {% if total_pages > 1 %}
     <div class="pagination">
         {% if page > 1 %}
-        <a href="/printing/history?page={{ page - 1 }}">←</a>
+        <a href="/printing/history?page={{ page - 1 }}{% if selected_user_id %}&user_id={{ selected_user_id }}{% endif %}">←</a>
         {% endif %}
 
         {% for p in range(1, total_pages + 1) %}
             {% if p == 1 or p == total_pages or (p >= page - 2 and p <= page + 2) %}
-                <a href="/printing/history?page={{ p }}" class="{% if p == page %}active{% endif %}">{{ p }}</a>
+                <a href="/printing/history?page={{ p }}{% if selected_user_id %}&user_id={{ selected_user_id }}{% endif %}" class="{% if p == page %}active{% endif %}">{{ p }}</a>
             {% elif p == 2 and page > 4 %}
                 <span class="pagination-ellipsis">...</span>
             {% elif p == total_pages - 1 and page < total_pages - 3 %}
@@ -233,7 +261,7 @@
         {% endfor %}
 
         {% if page < total_pages %}
-        <a href="/printing/history?page={{ page + 1 }}">→</a>
+        <a href="/printing/history?page={{ page + 1 }}{% if selected_user_id %}&user_id={{ selected_user_id }}{% endif %}">→</a>
         {% endif %}
     </div>
     {% endif %}
@@ -242,7 +270,7 @@
     <div class="no-jobs">
         <div class="no-jobs-icon">🖨️</div>
         <h3>История пуста</h3>
-        <p>У вас пока нет заданий на печать. Запустите печать этикеток, чтобы увидеть историю.</p>
+        <p>{% if is_admin %}Нет заданий на печать по выбранному фильтру.{% else %}У вас пока нет заданий на печать. Запустите печать этикеток, чтобы увидеть историю.{% endif %}</p>
         <a href="/printing" class="btn-submit" style="margin-top: 24px;">🖨️ Перейти к печати</a>
     </div>
     {% endif %}
