@@ -15,6 +15,7 @@ from starlette.responses import JSONResponse
 import models
 from helper import BASE_DIR
 from security import get_current_user
+from auth_utils import verify_password
 
 # Шаблоны.
 from templates_config import templates
@@ -171,11 +172,20 @@ async def home(
         current_user: models.User = Depends(get_current_user)
 ):
     """Главная страница"""
+    # Предупреждение, если используется пароль по умолчанию.
+    is_default_password = False
+    if current_user is not None:
+        try:
+            is_default_password = verify_password('admin', current_user.password)
+        except Exception:
+            is_default_password = False
+
     return templates.TemplateResponse(
         "home.html",
         {
             "request": request,
-            'user': current_user
+            'user': current_user,
+            'is_default_password': is_default_password
         }
     )
 

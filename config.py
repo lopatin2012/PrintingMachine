@@ -1,11 +1,13 @@
 from pathlib import Path
 import os
 
-CONFIG_BASE_DIR = Path(__file__).resolve().parent.parent
+# Корень проекта (config.py лежит в корне проекта).
+CONFIG_BASE_DIR = Path(__file__).resolve().parent
 
+# Путь к бинарнику zebrash (опциональный локальный движок рендера превью).
 ZEBRASH_BINARY = os.getenv(
     'ZEBRASH_BINARY',
-    str(CONFIG_BASE_DIR / 'bin' / 'zebrash-render')
+    str(CONFIG_BASE_DIR / 'bin' / 'zebrash-renderer')
 )
 
 ZPL_RENDER_DEFAULTS = {

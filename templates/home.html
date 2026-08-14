@@ -5,6 +5,11 @@
 
 {% block content %}
 <div class="dashboard">
+    {% if is_default_password %}
+    <div class="warning-banner" style="background:#fff3cd;border:1px solid #ffe08a;border-radius:8px;padding:12px 16px;margin-bottom:20px;color:#664d03;">
+        ⚠️ Вы используете пароль по умолчанию (<b>admin</b>). Рекомендуется немедленно сменить пароль администратора.
+    </div>
+    {% endif %}
     <!-- Админ панель -->
     {% if user and user.role.is_admin %}
     <div class="role-panel admin admin-panel">

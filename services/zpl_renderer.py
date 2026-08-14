@@ -57,7 +57,7 @@ def render_zpl_with_zebrash(
         result = subprocess.run(
             cmd,
             capture_output=True,
-            timeout=False
+            timeout=timeout,
         )
 
         if result.returncode != 0:
