@@ -99,13 +99,31 @@ app = FastAPI(
 
 # Middleware.
 from fastapi.middleware.cors import CORSMiddleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=['*'],  # Домены.
-    allow_credentials=True,
-    allow_methods=['*'],
-    allow_headers=['*'],
-)
+
+# Разрешённые домены для CORS (переменная ALLOWED_ORIGINS, через запятую).
+# По умолчанию список пуст — CORS отключён, работают только same-origin запросы
+# (веб-интерфейс на том же домене CORS не требует).
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv('ALLOWED_ORIGINS', '').split(',')
+    if origin.strip()
+]
+
+if ALLOWED_ORIGINS:
+    allow_credentials = '*' not in ALLOWED_ORIGINS
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=ALLOWED_ORIGINS,
+        allow_credentials=allow_credentials,
+        allow_methods=['*'],
+        allow_headers=['*'],
+    )
+    logger.info(
+        'CORS: разрешённые домены: %s (credentials: %s)',
+        ALLOWED_ORIGINS, allow_credentials,
+    )
+else:
+    logger.info('CORS не настроен (ALLOWED_ORIGINS пуст) — только same-origin запросы')
 
 if not IS_DEBUG:
     from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
