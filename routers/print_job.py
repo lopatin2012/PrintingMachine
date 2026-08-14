@@ -1,13 +1,10 @@
 # routers/print_job.py
 
 import logging
-import asyncio
-import socket
-from contextlib import contextmanager
-from datetime import date, timedelta, datetime
+from datetime import date, timedelta
 from uuid import UUID
 
-from fastapi import APIRouter, Request, Depends, HTTPException, status, BackgroundTasks, Form, Query
+from fastapi import APIRouter, Request, Depends, HTTPException, status, Form, Query
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, func
@@ -21,7 +18,6 @@ from crud.printer import PrinterCRUD
 from crud.code_template import CodeTemplateCRUD
 from schemas import PrintJobCreate
 from models import User, Workshop, Line, PrintJob, WorkshopUser, Product, Printer, CodeTemplate
-from helpers.printers import substitute_placeholders, replace_cyrillic_in_zpl, send_zpl_safely
 from services.print_queue import PrintTask
 
 from templates_config import templates
@@ -34,180 +30,6 @@ workshop_user_crud = WorkshopUserCRUD()
 product_crud = ProductCRUD()
 printer_crud = PrinterCRUD()
 template_crud = CodeTemplateCRUD()
-
-# ─── Глобальный реестр активных задач (job_id → asyncio.Task) ────────────────
-# Используется для отмены фоновой задачи при нажатии "Стоп"
-_active_print_tasks: dict[str, asyncio.Task] = {}
-
-
-@contextmanager
-def printer_connection(ip_address: str, port: int, timeout: int = 10):
-    """Менеджер контекста для TCP-соединения с принтером."""
-    sock = None
-    try:
-        sock = socket.create_connection((ip_address, port), timeout=timeout)
-        sock.settimeout(timeout)
-        yield sock
-    except (socket.timeout, socket.error, OSError) as e:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Ошибка подключения к принтеру {ip_address}:{port}: {str(e)}"
-        )
-    finally:
-        if sock:
-            try:
-                sock.close()
-            except Exception:
-                pass
-
-
-# ─── ФОНОВАЯ ЗАДАЧА ПЕЧАТИ ───────────────────────────────────────────────────
-
-async def _start_printing(
-        job_id: UUID,
-        db: AsyncSession,
-        zpl_code: str,
-        printer_ip: str,
-        printer_port: int,
-        marking_date: date,
-        expiration_date: date,
-        batch_number: str,
-        first_box: int,
-        boxes_count: int,
-        gtin: str
-):
-    """
-    Алгоритм:
-    1. Подключаемся к принтеру через TCP (порт 9100)
-    2. Для каждой коробки:
-       a. Подставляем все плейсхолдеры (через _substitute_placeholders)
-       b. Заменяем кириллицу на HEX
-       c. Отправляем дробно (_send_zpl_safely — защита от переполнения буфера)
-       d. Делаем паузу, чтобы принтер успел обработать команду
-       e. Обновляем счётчик в БД
-    3. При asyncio.CancelledError (нажатие «Стоп») — корректно завершаемся
-    4. При сетевой ошибке — помечаем задание как failed
-    """
-    job_id_str = str(job_id)
-    logger.info(
-        f"Начало печати задания {job_id_str}: "
-        f"{boxes_count} этикеток → {printer_ip}:{printer_port}"
-    )
-
-    try:
-        # ── 1. Статус → processing ────────────────────────────────────────────
-        job = await print_job_crud.get(db, job_id)
-        if not job:
-            logger.error(f"Задание {job_id_str} не найдено при запуске печати")
-            return
-
-        job.status = 'processing'
-        job.printed_count = 0
-        await db.commit()
-
-        # ── 2. Предварительная обработка кода (не зависит от номера коробки) ─
-        prepared_code = replace_cyrillic_in_zpl(zpl_code)
-
-        # ── 3. Соединение с принтером ─────────────────────────────────────────
-        try:
-            with printer_connection(printer_ip, printer_port, timeout=10) as sock:
-                logger.info(f"Подключено к принтеру {printer_ip}:{printer_port}")
-
-                for i in range(boxes_count):
-                    # Проверяем отмену перед каждой этикеткой
-                    # (asyncio.CancelledError прилетит именно здесь)
-                    await asyncio.sleep(0)
-
-                    current_box_number = first_box + i
-
-                    # Подставляем все плейсхолдеры для текущей коробки
-                    box_zpl = substitute_placeholders(
-                        prepared_code,
-                        batch_number=batch_number,
-                        marking_date=marking_date,
-                        expiration_date=expiration_date,
-                        current_box=current_box_number,
-                        gtin=gtin
-                    )
-
-                    try:
-                        # Отправляем по частям — защита от переполнения буфера
-                        send_zpl_safely(sock, box_zpl.encode('utf-8'))
-
-                        logger.debug(
-                            f"[{job_id_str}] Этикетка {i + 1}/{boxes_count} "
-                            f"(коробка №{current_box_number}) отправлена"
-                        )
-
-                        # Пауза между этикетками:
-                        # 100 мс достаточно для большинства принтеров Zebra/TSC.
-                        # Если принтер медленный — увеличь до 0.2–0.5
-                        await asyncio.sleep(0.1)
-
-                        # Обновляем счётчик в БД
-                        job = await print_job_crud.get(db, job_id)
-                        if job:
-                            job.printed_count = i + 1
-                            await db.commit()
-
-                    except (socket.timeout, socket.error, OSError) as e:
-                        error_msg = (
-                            f"Ошибка сети при печати коробки {current_box_number}: {e}"
-                        )
-                        logger.error(f"[{job_id_str}] {error_msg}")
-
-                        job = await print_job_crud.get(db, job_id)
-                        if job:
-                            job.status = 'failed'
-                            job.error_message = error_msg[:500]
-                            job.printed_count = i
-                            await db.commit()
-                        return
-
-                # ── Всё напечатано ────────────────────────────────────────────
-                job = await print_job_crud.get(db, job_id)
-                if job:
-                    job.status = 'completed'
-                    job.completed_at = datetime.utcnow()
-                    job.printed_count = boxes_count
-                    await db.commit()
-
-                logger.info(
-                    f"[{job_id_str}] Завершено: {boxes_count} этикеток → "
-                    f"{printer_ip}:{printer_port}"
-                )
-
-        except HTTPException as he:
-            # Ошибка подключения к принтеру (из printer_connection)
-            job = await print_job_crud.get(db, job_id)
-            if job:
-                job.status = 'failed'
-                job.error_message = he.detail[:500]
-                await db.commit()
-            logger.error(f"[{job_id_str}] Ошибка принтера: {he.detail}")
-
-    except asyncio.CancelledError:
-        # ── Задача отменена через кнопку «Стоп» ──────────────────────────────
-        logger.info(f"[{job_id_str}] Задание отменено оператором")
-        job = await print_job_crud.get(db, job_id)
-        if job:
-            job.status = 'cancelled'
-            job.error_message = 'Остановлено оператором'
-            await db.commit()
-        # Не пробрасываем — задача завершается корректно
-
-    except Exception as e:
-        logger.exception(f"[{job_id_str}] Необработанное исключение: {e}")
-        job = await print_job_crud.get(db, job_id)
-        if job:
-            job.status = 'failed'
-            job.error_message = str(e)[:500]
-            await db.commit()
-
-    finally:
-        # Убираем из реестра активных задач
-        _active_print_tasks.pop(job_id_str, None)
-
 
 # ─── ЭНДПОИНТЫ ───────────────────────────────────────────────────────────────
 
@@ -316,7 +138,6 @@ async def start_printing(
     line_ids = [wu.line_id for wu in user_workshops if wu.line_id]
 
     # Проверяем, есть ли у пользователя доступ «Все цеха»
-    from models import Workshop
     workshops_result = await db.execute(
         select(Workshop).where(Workshop.id.in_(workshop_ids))
     )
@@ -347,20 +168,6 @@ async def start_printing(
         raise HTTPException(status_code=400, detail="Выбранный шаблон не активен")
     if template.product_id != product_id:
         raise HTTPException(status_code=400, detail="Шаблон не принадлежит выбранному продукту")
-
-    if not template:
-        template = (await db.execute(
-            select(CodeTemplate).where(
-                CodeTemplate.product_id == product_id,
-                CodeTemplate.is_active == True
-            ).order_by(CodeTemplate.created_at.desc())
-        )).scalar_one_or_none()
-
-    if not template:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Нет активного шаблона для продукта '{product.name}'"
-        )
 
     expiration_date = marking_date + timedelta(days=product.date_expiration)
     boxes_count = last_box - first_box + 1
@@ -397,24 +204,20 @@ async def start_printing(
 
     printer_queue = request.app.state.printer_queue
 
-    if printer_queue:
-        await printer_queue.enqueue(print_task)
-        status_msg = f"Задание добавлено в очередь печати (принтер: {printer.name})"
-    else:
-        job_id_str = str(print_job.id)
-        task = asyncio.create_task(
-            _start_printing(
-                print_job.id, db,
-                template.print_code,
-                printer.ip_address, printer.port_address,
-                marking_date, expiration_date,
-                batch_number.strip(),
-                first_box, boxes_count,
-                gtin
-            )
+    if not printer_queue:
+        # Очередь не инициализирована (например, приложение запущено без lifespan).
+        job = await print_job_crud.get(db, print_job.id)
+        if job:
+            job.status = 'failed'
+            job.error_message = 'Очередь печати не инициализирована'
+            await db.commit()
+        raise HTTPException(
+            status_code=503,
+            detail="Очередь печати не инициализирована"
         )
-        _active_print_tasks[job_id_str] = task
-        status_msg = f"Печать запущена напрямую (принтер: {printer.name})"
+
+    await printer_queue.enqueue(print_task)
+    status_msg = f"Задание добавлено в очередь печати (принтер: {printer.name})"
 
     logger.info(
         f"Запущена печать: пользователь={current_user.login}, "
@@ -458,18 +261,7 @@ async def stop_print_job(
             "message": "Команда остановки отправлена в очередь. Задание будет остановлено после текущей этикетки."
         })
 
-    # Fallback: отмена через старый реестр задач
-    job_id_str = str(job_id)
-    task = _active_print_tasks.get(job_id_str)
-    if task and not task.done():
-        task.cancel()
-        logger.info(f"Задание {job_id_str} отменено через asyncio.Task")
-        return JSONResponse({
-            "success": True,
-            "message": "Задание остановлено (прямая отмена)."
-        })
-
-    # Если задача не найдена — обновляем БД напрямую
+    # Если задание не нашлось в очереди — обновляем БД напрямую
     job.status = 'cancelled'
     job.error_message = 'Остановлено оператором'
     await db.commit()
@@ -659,7 +451,6 @@ async def get_available_printers(
     if not user_workshops:
         raise HTTPException(status_code=403, detail="Нет доступа к цехам")
 
-    from models import Workshop
     workshop_ids = [wu.workshop_id for wu in user_workshops]
     line_ids = [wu.line_id for wu in user_workshops if wu.line_id]
 
