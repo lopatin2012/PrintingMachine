@@ -197,6 +197,8 @@ async def start_printing(
         printer_ip=printer.ip_address,
         printer_port=printer.port_address,
         printer_type=printer.printer_type,
+        buffer_limit=printer.buffer_limit,
+        batch_size=printer.batch_size,
         marking_date=marking_date,
         expiration_date=expiration_date,
         batch_number=batch_number.strip(),

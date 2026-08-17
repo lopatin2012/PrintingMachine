@@ -92,12 +92,25 @@ async def printer_create(
         ip_address: str = Form(...),
         port_address: int = Form(...),
         printer_type: str = Form('zebra'),
+        buffer_limit: int = Form(25),
+        batch_size: int = Form(5),
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_admin)
 ):
     """Добавить принтер"""
     name = name.strip()
     printer_type = printer_type.strip().lower()
+
+    if buffer_limit < 1 or buffer_limit > 5000:
+        return RedirectResponse(
+            url='/printers?error=Буфер очереди должен быть от 1 до 5000 этикеток',
+            status_code=status.HTTP_303_SEE_OTHER
+        )
+    if batch_size < 1 or batch_size > 500:
+        return RedirectResponse(
+            url='/printers?error=Размер пачки должен быть от 1 до 500 этикеток',
+            status_code=status.HTTP_303_SEE_OTHER
+        )
 
     if printer_type not in ('zebra', 'tsc'):
         return RedirectResponse(
@@ -158,7 +171,9 @@ async def printer_create(
         line_id=line_id,
         ip_address=ip_address,
         port_address=port_address,
-        printer_type=printer_type
+        printer_type=printer_type,
+        buffer_limit=buffer_limit,
+        batch_size=batch_size,
     )
     added = await printer_crud.create(db, printer_data)
 
@@ -182,6 +197,8 @@ async def printer_update(
     ip_address: str = Form(...),
     port_address: int = Form(9100),
     printer_type: str = Form('zebra'),
+    buffer_limit: int = Form(25),
+    batch_size: int = Form(5),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_admin)
 ):
@@ -190,6 +207,17 @@ async def printer_update(
     if not printer:
         return RedirectResponse(
             url='/printers?error=Принтер не найден',
+            status_code=status.HTTP_303_SEE_OTHER
+        )
+
+    if buffer_limit < 1 or buffer_limit > 5000:
+        return RedirectResponse(
+            url='/printers?error=Буфер очереди должен быть от 1 до 5000 этикеток',
+            status_code=status.HTTP_303_SEE_OTHER
+        )
+    if batch_size < 1 or batch_size > 500:
+        return RedirectResponse(
+            url='/printers?error=Размер пачки должен быть от 1 до 500 этикеток',
             status_code=status.HTTP_303_SEE_OTHER
         )
 
@@ -259,7 +287,9 @@ async def printer_update(
         line_id=line_id,
         ip_address=ip_address,
         port_address=port_address,
-        printer_type=printer_type
+        printer_type=printer_type,
+        buffer_limit=buffer_limit,
+        batch_size=batch_size,
     )
     updated = await printer_crud.update(db, printer_id, printer_data)
 

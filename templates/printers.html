@@ -123,7 +123,7 @@
                     {% if user and user.role and user.role.is_admin %}
                     <td class="actions-cell">
                         <button class="table-btn edit-btn"
-                                onclick='editPrinter("{{ printer.id }}", "{{ printer.name|e }}", "{{ printer.ip_address|e }}", {{ printer.port_address }}, "{{ printer.printer_type }}", "{{ printer.line_id }}")'>
+                                onclick='editPrinter("{{ printer.id }}", "{{ printer.name|e }}", "{{ printer.ip_address|e }}", {{ printer.port_address }}, "{{ printer.printer_type }}", "{{ printer.line_id }}", {{ printer.buffer_limit }}, {{ printer.batch_size }})'>
                             ✏️ Редактировать
                         </button>
                         <button class="table-btn delete-btn"
@@ -258,6 +258,44 @@
                     <small class="form-hint">Производитель принтера: Zebra или TSC</small>
                 </div>
 
+                <div class="form-group">
+                    <label for="bufferLimit" class="form-label">
+                        <span class="label-icon">📦</span>
+                        Буфер очереди (этикеток)
+                    </label>
+                    <div class="input-wrapper">
+                        <input
+                            type="number"
+                            id="bufferLimit"
+                            name="buffer_limit"
+                            class="form-input"
+                            value="25"
+                            min="1"
+                            max="5000"
+                        >
+                    </div>
+                    <small class="form-hint">Сколько этикеток максимум держать в очереди принтера. Если принтер начинает «тупить»/блокироваться — уменьшите (для TSC-аппликаторов обычно 25–30)</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="batchSize" class="form-label">
+                        <span class="label-icon">🧾</span>
+                        Пачка отправки (этикеток)
+                    </label>
+                    <div class="input-wrapper">
+                        <input
+                            type="number"
+                            id="batchSize"
+                            name="batch_size"
+                            class="form-input"
+                            value="5"
+                            min="1"
+                            max="500"
+                        >
+                    </div>
+                    <small class="form-hint">Отправлять этикетки пачками по N штук, проверяя статус принтера между пачками</small>
+                </div>
+
                 <div class="form-actions">
                     <button type="button" class="btn-secondary" onclick="closePrinterForm()">Отмена</button>
                     <button type="submit" class="btn-submit" id="formSubmitBtn">
@@ -385,12 +423,14 @@ function openAddPrinterForm() {
     document.getElementById('ipAddress').value = '';
     document.getElementById('portAddress').value = '9100';
     document.getElementById('printerType').value = 'zebra';
+    document.getElementById('bufferLimit').value = '25';
+    document.getElementById('batchSize').value = '5';
     document.getElementById('lineId').value = '';
     document.getElementById('printerFormModal').classList.remove('hidden');
 }
 
 // Открыть форму редактирования
-function editPrinter(id, name, ip, port, printerType, lineId) {
+function editPrinter(id, name, ip, port, printerType, lineId, bufferLimit, batchSize) {
     document.getElementById('formTitle').textContent = '✏️ Редактировать принтер';
     document.getElementById('formSubmitText').textContent = 'Сохранить изменения';
     document.getElementById('printerForm').action = `/printers/${id}`;
@@ -399,6 +439,8 @@ function editPrinter(id, name, ip, port, printerType, lineId) {
     document.getElementById('ipAddress').value = ip.trim();
     document.getElementById('portAddress').value = port;
     document.getElementById('printerType').value = printerType || 'zebra';
+    document.getElementById('bufferLimit').value = bufferLimit || 25;
+    document.getElementById('batchSize').value = batchSize || 5;
     document.getElementById('lineId').value = lineId;
     document.getElementById('printerFormModal').classList.remove('hidden');
     document.getElementById('printerName').focus();

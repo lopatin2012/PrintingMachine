@@ -430,22 +430,38 @@ def check_printer_status_on_socket(sock, printer_type: str = 'zebra',
         return {'ok': False, 'error': str(e)}
 
 
-def check_tsc_mileage_on_socket(sock, timeout: float = 1.0):
+def check_tsc_mileage_on_socket(sock, timeout: float = 1.5):
     """Пробег печати TSC (~!@): целая часть (обычно дюймы) + CR.
 
-    Используется для контроля потребления этикеток аппликатором: пробег
-    растёт только когда принтер реально печатает (по сигналу датчика).
+    Важно: запрос идёт по УЖЕ ОТКРЫТОМУ сокету. Во время печати по тому же
+    сокету, что и этикетки, ~!@ встаёт за ними в потоке и не отвечает —
+    поэтому при контроле потребления используем СВЕЖЕЕ подключение
+    (check_tsc_mileage), когда принтер свободен (между пачками).
     Не отвечает — возвращаем None (не ошибку).
     """
     try:
         sock.settimeout(min(timeout, 2.0))
         sock.sendall(b'~!@\r\n')
-        data = sock.recv(32)
+        data = sock.recv(64)
         m = re.search(rb'(\d+)', data)
         if not m:
             return None
         return int(m.group(1))
     except (socket.timeout, ConnectionResetError, ConnectionError, OSError, ValueError):
+        return None
+
+
+def check_tsc_mileage(ip: str, port: int = 9100, timeout: float = 1.5):
+    """Пробег TSC через отдельное (свежее) подключение.
+
+    Используется между пачками, когда принтер свободен — в этом режиме
+    запросы работают даже при заполненной очереди (проверено на PEX-2340).
+    """
+    try:
+        with socket.create_connection((ip, port), timeout=timeout) as sock:
+            time.sleep(0.05)
+            return check_tsc_mileage_on_socket(sock, timeout)
+    except Exception:
         return None
 
 

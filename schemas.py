@@ -73,6 +73,8 @@ class PrinterBase(BaseModel):
     ip_address: str = Field(..., max_length=45, description='IP-адрес')
     port_address: int = Field(9100, ge=1, le=65535, description='Порт')
     printer_type: str = Field('zebra', description='Тип принтера (zebra/tsc)')
+    buffer_limit: int = Field(25, ge=1, le=5000, description='Макс. этикеток в очереди принтера')
+    batch_size: int = Field(5, ge=1, le=500, description='Отправка пачками по N этикеток')
 
     @field_validator('ip_address')
     @classmethod
@@ -105,6 +107,8 @@ class PrinterUpdate(BaseModel):
     ip_address: str = Field(None, description='IP-адрес')
     port_address: Optional[int] = Field(None, ge=1, le=65535, description='Порт')
     printer_type: Optional[str] = Field(None, description='Тип принтера (zebra/tsc)')
+    buffer_limit: Optional[int] = Field(None, ge=1, le=5000, description='Макс. этикеток в очереди принтера')
+    batch_size: Optional[int] = Field(None, ge=1, le=500, description='Отправка пачками по N этикеток')
 
     @field_validator('ip_address')
     @classmethod
