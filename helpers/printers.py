@@ -412,7 +412,6 @@ def check_printer_status_on_socket(sock, printer_type: str = 'zebra',
             sock.sendall(b'\x1b!S')
             data = sock.recv(32)
             return _parse_tsc_status(data)
-
         # Zebra: ~HS
         sock.sendall(b'~HS\r\n')
         response = b''
@@ -429,6 +428,25 @@ def check_printer_status_on_socket(sock, printer_type: str = 'zebra',
         return _parse_zebra_hs(response)
     except (socket.timeout, ConnectionResetError, ConnectionError, OSError) as e:
         return {'ok': False, 'error': str(e)}
+
+
+def check_tsc_mileage_on_socket(sock, timeout: float = 1.0):
+    """Пробег печати TSC (~!@): целая часть (обычно дюймы) + CR.
+
+    Используется для контроля потребления этикеток аппликатором: пробег
+    растёт только когда принтер реально печатает (по сигналу датчика).
+    Не отвечает — возвращаем None (не ошибку).
+    """
+    try:
+        sock.settimeout(min(timeout, 2.0))
+        sock.sendall(b'~!@\r\n')
+        data = sock.recv(32)
+        m = re.search(rb'(\d+)', data)
+        if not m:
+            return None
+        return int(m.group(1))
+    except (socket.timeout, ConnectionResetError, ConnectionError, OSError, ValueError):
+        return None
 
 
 def check_printer_status_tsc(ip: str, port: int = 9100, timeout: float = 3.0) -> dict:

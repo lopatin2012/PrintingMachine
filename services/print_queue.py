@@ -1,6 +1,8 @@
 # services/print_queue.py
 import asyncio
 import logging
+import os
+import re
 import socket
 import time
 from dataclasses import dataclass, field
@@ -12,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from helpers.printers import (
     check_printer_status_async, check_printer_status_on_socket,
-    clear_printer_queue_async,
+    check_tsc_mileage_on_socket, clear_printer_queue_async,
     replace_cyrillic_in_zpl, substitute_placeholders, send_zpl_safely)
 from models import PrintJob
 
@@ -49,6 +51,38 @@ BUFFER_WAIT_MAX_SECONDS = 60
 TSC_MAX_BUFFERED_BYTES = 4000   # отправлять не более ~половины буфера за раз
 TSC_DRAIN_WAIT = 0.2            # пауза после бурста (принтер печатает/освобождает)
 
+# TSC-АППЛИКАТОР: принтер печатает этикетку ТОЛЬКО по сигналу датчика линии.
+# Чтобы не заливать его буфер (принтер должен оставаться доступным для опроса,
+# а этикетки не должны уходить «в пустоту» при остановке линии), отправляем
+# НЕ БЫСТРЕЕ реальной печати: перед отправкой следующей этикетки ждём, пока
+# принтер напечатает предыдущие (контроль по пробегу ~!@). Темп = скорость
+# линии; при остановке линии задание просто ждёт сигнала датчика.
+TSC_MILEAGE_BACKLOG = 5          # сколько этикеток держать «впереди» печати
+TSC_MILEAGE_POLL = 0.3           # как часто проверять пробег, сек
+TSC_MILEAGE_STALL_WARN = 60      # предупреждение, если печать не идёт дольше
+# Длина этикетки в дюймах (для расчёта напечатанного из пробега). По умолчанию
+# вычисляется из ^LL шаблона и TSC_DPI (203). Если принтер сообщает пробег
+# не в дюймах — задайте точное значение в TSC_MILEAGE_PER_LABEL.
+TSC_DPI = int(os.getenv('TSC_DPI', '203'))
+
+
+def _zpl_label_length_inches(zpl_code: str):
+    """Длина этикетки в дюймах из ^LL (точек) и плотности печати (dpi).
+
+    Приоритет: переменная окружения TSC_MILEAGE_PER_LABEL (дюймы на этикетку),
+    затем расчёт из шаблона. Вернёт None, если вычислить нельзя.
+    """
+    override = os.getenv('TSC_MILEAGE_PER_LABEL')
+    if override:
+        try:
+            return float(override)
+        except ValueError:
+            logger.warning('TSC_MILEAGE_PER_LABEL=%r — не число, игнорирую', override)
+    m = re.search(r'\^LL(\d+)', zpl_code or '')
+    if not m:
+        return None
+    return int(m.group(1)) / TSC_DPI
+
 
 @dataclass
 class PrintTask:
@@ -70,6 +104,8 @@ class PrintTask:
     max_retries: int = 10
     created_at: datetime = field(default_factory=datetime.now)
     printed_count: int = field(default=0, init=False, repr=False)
+    # Пробег ~!@ в начале задания (база для контроля потребления аппликатора).
+    tsc_mileage_start: int = field(default=0, init=False, repr=False)
 
 
 class PrinterQueue:
@@ -362,18 +398,45 @@ class PrinterQueue:
 
             # TSC: темповая отправка — у PEX буфер приёма ~8 КБ, поэтому
             # отправляем не более TSC_MAX_BUFFERED_BYTES за раз, затем пауза.
+            # Плюс контроль потребления аппликатора (по пробегу ~!@) — см.
+            # _wait_for_label_consumption.
             is_tsc = (task.printer_type or '').lower() == 'tsc'
             tsc_bytes_since_drain = 0
+            tsc_label_inches = None
+            if is_tsc:
+                tsc_label_inches = _zpl_label_length_inches(prepared_code)
+                if tsc_label_inches is None:
+                    logger.warning(
+                        "TSC %s:%d: не удалось вычислить длину этикетки из шаблона "
+                        "(нет ^LL или TSC_MILEAGE_PER_LABEL) — контроль потребления "
+                        "аппликатора отключён, работает только темповая отправка",
+                        task.printer_ip, task.printer_port,
+                    )
+                elif start_index == 0:
+                    # База пробега — сразу после очистки очереди.
+                    task.tsc_mileage_start = await asyncio.to_thread(
+                        check_tsc_mileage_on_socket, sock, 1.0) or 0
 
             for i in range(start_index, task.boxes_count):
                 if self._is_cancelled(task):
                     await self._mark_job_cancelled(task.job_id, db)
                     return
 
-                now = time.monotonic()
-                if now - last_buffer_check >= BUFFER_CHECK_INTERVAL:
-                    last_buffer_check = now
+                # TSC: статус-гейт перед КАЖДОЙ этикеткой — если принтер
+                # не отвечает на статус (буфер полон/пауза/завис), не шлём
+                # этикетку «в пустоту» (стек принтера впитывает мегабайты).
+                if is_tsc:
                     await self._control_printer_buffer(task, sock)
+                    # Аппликатор: ждём, пока принтер напечатает предыдущие
+                    # этикетки (скорость линии), прежде чем слать следующую.
+                    if tsc_label_inches is not None and task.tsc_mileage_start:
+                        await self._wait_for_label_consumption(
+                            task, sock, i, tsc_label_inches)
+                else:
+                    now = time.monotonic()
+                    if now - last_buffer_check >= BUFFER_CHECK_INTERVAL:
+                        last_buffer_check = now
+                        await self._control_printer_buffer(task, sock)
 
                 current_box = task.first_box + i
                 box_zpl = substitute_placeholders(
@@ -414,6 +477,59 @@ class PrinterQueue:
         await db.commit()
         logger.info("Задание %s успешно завершено", task.job_id)
 
+    async def _query_status(self, task: PrintTask, sock, timeout: float = 1.0) -> dict:
+        """Статус принтера: по рабочему сокету (во время печати) или через
+        отдельное подключение (до/после печати). Не блокирует event loop."""
+        if sock is not None:
+            return await asyncio.to_thread(
+                check_printer_status_on_socket, sock, task.printer_type, timeout)
+        return await check_printer_status_async(
+            task.printer_ip, task.printer_port, task.printer_type, timeout=timeout)
+
+    async def _wait_for_label_consumption(self, task: PrintTask, sock, i: int,
+                                          label_inches: float):
+        """Аппликатор TSC: перед отправкой этикетки i ждём, пока принтер
+        напечатает предыдущие (пробег ~!@ вырос на соответствующую длину).
+
+        Так темп отправки = скорость линии: буфер принтера почти пуст (запас
+        TSC_MILEAGE_BACKLOG), принтер доступен для опроса, а при остановке
+        линии задание просто ждёт сигнала датчика — этикетки не уходят
+        «в пустоту».
+        """
+        printer_addr = f"{task.printer_ip}:{task.printer_port}"
+        required_printed = max(0, i - TSC_MILEAGE_BACKLOG)
+        stall_warned = False
+        stall_since = time.monotonic()
+
+        while True:
+            if self._is_cancelled(task):
+                raise ConnectionError("Задание отменено при ожидании печати аппликатора")
+
+            m = await asyncio.to_thread(check_tsc_mileage_on_socket, sock, 1.0)
+            if m is None:
+                # Принтер не отвечает на пробег — повторный запрос, затем стоп.
+                await asyncio.sleep(0.5)
+                m = await asyncio.to_thread(check_tsc_mileage_on_socket, sock, 1.0)
+                if m is None:
+                    raise ConnectionError(
+                        f"Принтер {printer_addr} не отвечает на запрос пробега "
+                        f"(буфер полон/завис) — отправка остановлена"
+                    )
+
+            printed = (m - (task.tsc_mileage_start or m)) / label_inches
+            if printed >= required_printed:
+                return
+
+            if not stall_warned and time.monotonic() - stall_since > TSC_MILEAGE_STALL_WARN:
+                stall_warned = True
+                logger.warning(
+                    "Принтер %s (аппликатор) не печатает уже %dс — жду сигнала "
+                    "датчика линии (напечатано ~%d из %d отправленных)",
+                    printer_addr, TSC_MILEAGE_STALL_WARN,
+                    int(printed), i + 1,
+                )
+            await asyncio.sleep(TSC_MILEAGE_POLL)
+
     async def _control_printer_buffer(self, task: PrintTask, sock=None):
         """Проверка статуса принтера и поддержание запаса в его буфере.
 
@@ -421,37 +537,44 @@ class PrinterQueue:
           Zebra — уровень форматов в буфере (~HS eee): стоп при
                   BUFFER_MAX_LEVEL (или флаге переполнения), продолжение —
                   когда уровень ниже BUFFER_TARGET_LEVEL;
-          TSC   — темповая отправка в _print_boxes (буфер приёма ~8 КБ),
-                  здесь только страховка по флагу «Receive buffer full».
+          TSC   — статус-гейт перед каждой этикеткой + темповая отправка
+                  в _print_boxes (буфер приёма ~8 КБ). Если статус получить
+                  НЕ удаётся — отправку останавливаем (иначе данные уходят
+                  «в пустоту» в сетевой стек принтера).
 
         При печати (sock передан) статус запрашивается ПО ТОМУ ЖЕ СОКЕТУ:
         у TSC (PEX) параллельные подключения во время печати сбрасываются,
         а immediate-команды в рабочем соединении обрабатываются.
         """
         printer_addr = f"{task.printer_ip}:{task.printer_port}"
+        is_tsc = (task.printer_type or '').lower() == 'tsc'
 
-        if sock is not None:
-            status = await asyncio.to_thread(
-                check_printer_status_on_socket, sock, task.printer_type, 1.0)
-        else:
-            status = await check_printer_status_async(
-                task.printer_ip, task.printer_port, task.printer_type,
-                timeout=1.0,
-            )
+        status = await self._query_status(task, sock, timeout=1.0)
 
         if not status.get('ok'):
-            # Статус не получен (сбой сети / занятый принтер) — не останавливаем
-            # печать здесь: следующая отправка этикетки сама выявит обрыв и
-            # включит переподключение. Логируем только при смене ошибки, чтобы
-            # не засорять консоль одинаковыми сообщениями каждую секунду.
             error = status.get('error') or 'Unknown'
-            if getattr(task, '_last_buffer_error', None) != error:
-                logger.warning(
-                    "Не удалось получить статус принтера %s при контроле буфера: %s",
-                    printer_addr, error,
-                )
-                task._last_buffer_error = error
-            return
+            if is_tsc:
+                # TSC: статус недоступен при печати = буфер приёма полон или
+                # принтер завис/на паузе. Один повторный запрос через паузу,
+                # затем — СТОП (не лить этикетки в пустоту).
+                await asyncio.sleep(0.5)
+                status = await self._query_status(task, sock, timeout=1.0)
+                if not status.get('ok'):
+                    raise ConnectionError(
+                        f"Принтер {printer_addr} не отвечает на статус при печати "
+                        f"(буфер полон/завис): {status.get('error')}"
+                    )
+                # Повторный запрос удался — продолжаем анализ статуса ниже.
+            else:
+                # Zebra: сбой статуса не останавливает печать (следующая
+                # отправка сама выявит обрыв). Логируем только при смене ошибки.
+                if getattr(task, '_last_buffer_error', None) != error:
+                    logger.warning(
+                        "Не удалось получить статус принтера %s при контроле буфера: %s",
+                        printer_addr, error,
+                    )
+                    task._last_buffer_error = error
+                return
         task._last_buffer_error = None
 
         if status.get('paused'):
@@ -483,14 +606,7 @@ class PrinterQueue:
                 raise ConnectionError("Задание отменено при ожидании освобождения буфера")
             await asyncio.sleep(BUFFER_CHECK_INTERVAL)
 
-            if sock is not None:
-                status = await asyncio.to_thread(
-                    check_printer_status_on_socket, sock, task.printer_type, 1.0)
-            else:
-                status = await check_printer_status_async(
-                    task.printer_ip, task.printer_port, task.printer_type,
-                    timeout=1.0,
-                )
+            status = await self._query_status(task, sock, timeout=1.0)
             if not status.get('ok'):
                 # Сбой сети при ожидании — пусть внешний цикл переподключения
                 # разберётся с соединением.
