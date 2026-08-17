@@ -11,7 +11,7 @@ from typing import Callable, AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from helpers.printers import (
-    check_printer_status_by_type, clear_printer_queue, replace_cyrillic_in_zpl,
+    check_printer_status_async, clear_printer_queue_async, replace_cyrillic_in_zpl,
     substitute_placeholders, send_zpl_safely)
 from models import PrintJob
 
@@ -112,12 +112,12 @@ class PrinterQueue:
             task.job_id, self.queue.qsize(),
         )
 
-    def cancel_task(self, job_id: UUID) -> bool:
+    async def cancel_task(self, job_id: UUID) -> bool:
         """Пометить задание как отменённое и сбросить очередь принтера."""
         task = self._active_tasks.get(str(job_id))
         if task:
             task.max_retries = -1  # флаг отмены
-            self._cancel_printer_queue(
+            await self._cancel_printer_queue(
                 task.printer_ip, task.printer_port, task.printer_type)
             logger.info("Задание %s помечено как отменённое", job_id)
             return True
@@ -126,10 +126,14 @@ class PrinterQueue:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _cancel_printer_queue(self, printer_ip: str, printer_port: int,
-                              printer_type: str = 'zebra') -> bool:
-        """Очистить очередь принтера (Zebra ~JA / TSC CLS)."""
-        result = clear_printer_queue(printer_ip, printer_port, printer_type)
+    async def _cancel_printer_queue(self, printer_ip: str, printer_port: int,
+                                    printer_type: str = 'zebra') -> bool:
+        """Очистить очередь принтера (Zebra ~JA / TSC CLS).
+
+        Выполняется в отдельном потоке — сетевой вызов не должен блокировать
+        event loop (вызывается из веб-роутера отмены задания).
+        """
+        result = await clear_printer_queue_async(printer_ip, printer_port, printer_type)
         if result.get('success'):
             logger.info("Очередь принтера %s:%d очищена", printer_ip, printer_port)
         else:
@@ -236,7 +240,7 @@ class PrinterQueue:
                 await self._mark_job_cancelled(task.job_id, db)
                 return
 
-            status = check_printer_status_by_type(
+            status = await check_printer_status_async(
                 task.printer_ip, task.printer_port, task.printer_type,
                 timeout=2.0
             )
@@ -297,7 +301,7 @@ class PrinterQueue:
                 await self._mark_job_cancelled(task.job_id, db)
                 return
             await asyncio.sleep(2.0)
-            status = check_printer_status_by_type(
+            status = await check_printer_status_async(
                 task.printer_ip, task.printer_port, task.printer_type,
                 timeout=1.0
             )
@@ -326,9 +330,15 @@ class PrinterQueue:
         # но ещё не напечатанные этикетки.
         clear_cmd = b'CLS\r\n' if (task.printer_type or '').lower() == 'tsc' else b'~JA'
 
-        with socket.create_connection((task.printer_ip, task.printer_port), timeout=10) as sock:
+        # Сеть — блокирующие операции выполняем в отдельном потоке, чтобы
+        # длительный connect/отправка не «замораживали» event loop (веб).
+        sock = await asyncio.to_thread(
+            socket.create_connection,
+            (task.printer_ip, task.printer_port), 10,
+        )
+        try:
             if start_index == 0:
-                sock.sendall(clear_cmd)
+                await asyncio.to_thread(sock.sendall, clear_cmd)
             else:
                 logger.info(
                     "Задание %s: докачка с коробки %d без очистки очереди принтера",
@@ -360,7 +370,7 @@ class PrinterQueue:
                     article=task.article,
                     uip_include_batch=task.uip_include_batch,
                 )
-                send_zpl_safely(sock, box_zpl.encode('utf-8'))
+                await asyncio.to_thread(send_zpl_safely, sock, box_zpl.encode('utf-8'))
 
                 task.printed_count = i + 1
                 job.printed_count = task.printed_count
@@ -371,6 +381,8 @@ class PrinterQueue:
                     await db.commit()
 
                 await asyncio.sleep(0.1)
+        finally:
+            await asyncio.to_thread(sock.close)
 
         job.status = 'completed'
         job.completed_at = datetime.now()
@@ -389,20 +401,25 @@ class PrinterQueue:
                   продолжение — когда флаг снят (количество недоступно).
         """
         printer_addr = f"{task.printer_ip}:{task.printer_port}"
-        status = check_printer_status_by_type(
+        status = await check_printer_status_async(
             task.printer_ip, task.printer_port, task.printer_type,
             timeout=1.0,
         )
 
         if not status.get('ok'):
-            # Статус не получен (сбой сети) — не останавливаем печать здесь:
-            # следующая отправка этикетки сама выявит обрыв и включит
-            # переподключение.
-            logger.warning(
-                "Не удалось получить статус принтера %s при контроле буфера: %s",
-                printer_addr, status.get('error'),
-            )
+            # Статус не получен (сбой сети / занятый принтер) — не останавливаем
+            # печать здесь: следующая отправка этикетки сама выявит обрыв и
+            # включит переподключение. Логируем только при смене ошибки, чтобы
+            # не засорять консоль одинаковыми сообщениями каждую секунду.
+            error = status.get('error') or 'Unknown'
+            if getattr(task, '_last_buffer_error', None) != error:
+                logger.warning(
+                    "Не удалось получить статус принтера %s при контроле буфера: %s",
+                    printer_addr, error,
+                )
+                task._last_buffer_error = error
             return
+        task._last_buffer_error = None
 
         if status.get('paused'):
             raise ConnectionError("Принтер перешёл в паузу во время печати")
@@ -432,7 +449,7 @@ class PrinterQueue:
                 raise ConnectionError("Задание отменено при ожидании освобождения буфера")
             await asyncio.sleep(BUFFER_CHECK_INTERVAL)
 
-            status = check_printer_status_by_type(
+            status = await check_printer_status_async(
                 task.printer_ip, task.printer_port, task.printer_type,
                 timeout=1.0,
             )

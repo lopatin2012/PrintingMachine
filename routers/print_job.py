@@ -262,7 +262,7 @@ async def stop_print_job(
     printer_queue = request.app.state.printer_queue
 
     # Пробуем отменить через очередь
-    if printer_queue and printer_queue.cancel_task(job_id):
+    if printer_queue and await printer_queue.cancel_task(job_id):
         return JSONResponse({
             "success": True,
             "message": "Команда остановки отправлена в очередь. Задание будет остановлено после текущей этикетки."

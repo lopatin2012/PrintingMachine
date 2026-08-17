@@ -1,10 +1,12 @@
 # routers/printer.py
 
+import asyncio
 import os
 import subprocess
 import ipaddress
 import logging
 import platform
+import time
 from uuid import UUID
 import socket
 
@@ -19,9 +21,9 @@ from crud.printer import PrinterCRUD
 from schemas import PrinterCreate, PrinterUpdate, PrinterResponse
 from models import User, Line, Printer, Workshop, PrintJob
 from helpers.printers import (
-    check_printer_status_by_type,
-    clear_printer_queue,
-    restart_printer,
+    check_printer_status_async,
+    clear_printer_queue_async,
+    restart_printer_async,
 )
 
 # Шаблоны.
@@ -326,7 +328,11 @@ async def test_printer_connection(
         param = '-n' if platform.system().lower() == 'windows' else '-c'
         command = ['ping', param, '1', printer.ip_address]
 
-        output = subprocess.run(command, capture_output=True, text=True, timeout=1)
+        # ping — блокирующий процесс, выполняем в отдельном потоке,
+        # чтобы не «замораживать» event loop.
+        output = await asyncio.to_thread(
+            subprocess.run, command, capture_output=True, text=True, timeout=1
+        )
         is_available = output.returncode == 0
         message = f'В сети'
         logger.info(f'Принтер {printer.name} доступен')
@@ -389,6 +395,68 @@ def _printer_status_summary(status: dict) -> dict:
     }
 
 
+# ─── Статус принтеров: кэш + неблокирующая проверка ────────────────────────
+# Проверка статуса — сетевой вызов с таймаутом. Чтобы она не «вешала» веб
+# (event loop) и не дёргала принтер слишком часто, результаты кэшируются,
+# а сами вызовы выполняются в отдельном потоке.
+#
+# Недоступные принтеры (например, устаревшие модели, которые не отвечают
+# вообще) кэшируются надолго: реальная проверка не чаще раза в минуту,
+# остальное время отдаётся «Недоступен» из кэша — без таймаутов и лишних
+# предупреждений при каждом обновлении страницы.
+_STATUS_CACHE: dict[str, tuple[float, dict]] = {}
+_STATUS_CACHE_TTL = 3.0        # секунд — свежий (успешный) статус
+_STATUS_CACHE_FAIL_TTL = 60.0  # секунд — ошибка/недоступность
+
+
+def _status_cache_ttl(status: dict) -> float:
+    return _STATUS_CACHE_FAIL_TTL if not status.get('ok') else _STATUS_CACHE_TTL
+
+
+async def _get_printer_status(ip: str, port: int, printer_type: str,
+                              timeout: float = 1.5) -> dict:
+    """Проверка статуса с кэшем; не блокирует event loop."""
+    key = f'{ip}:{port}:{printer_type or "zebra"}'
+    now = time.monotonic()
+    cached = _STATUS_CACHE.get(key)
+    if cached and now - cached[0] < _status_cache_ttl(cached[1]):
+        return cached[1]
+
+    try:
+        status = await asyncio.wait_for(
+            check_printer_status_async(ip, port, printer_type, timeout=timeout),
+            timeout=timeout + 0.5,
+        )
+    except Exception as e:
+        status = {'ok': False, 'error': str(e)}
+
+    _STATUS_CACHE[key] = (time.monotonic(), status)
+    return status
+
+
+def _get_cached_printer_statuses(printers) -> dict[str, dict]:
+    """Статусы для первичного рендера страницы — ТОЛЬКО из кэша, без сети.
+
+    Загрузка страницы не ждёт таймауты принтеров. Живые статусы подтягивает
+    сам браузер через /api/printers/{id}/status (refreshAllStatus в шаблоне).
+    """
+    statuses = {}
+    for p in printers:
+        cached = _STATUS_CACHE.get(
+            f'{p.ip_address}:{p.port_address}:{p.printer_type or "zebra"}'
+        )
+        if cached:
+            statuses[str(p.id)] = _printer_status_summary(cached[1])
+        else:
+            statuses[str(p.id)] = {
+                'state': 'offline',
+                'label': 'Проверка...',
+                'detail': 'Статус будет обновлён автоматически',
+                'raw': '',
+            }
+    return statuses
+
+
 @router.get('/printers/control', response_class=HTMLResponse)
 async def printer_control_page(
         request: Request,
@@ -420,13 +488,9 @@ async def printer_control_page(
     for job in active_jobs:
         jobs_by_printer.setdefault(str(job.printer_id), []).append(job)
 
-    # Первичная проверка статуса (с коротким таймаутом).
-    printers_status = {}
-    for p in printers:
-        status = check_printer_status_by_type(
-            p.ip_address, p.port_address, p.printer_type, timeout=1.5
-        )
-        printers_status[str(p.id)] = _printer_status_summary(status)
+    # Первичные статусы — только из кэша (страница открывается мгновенно,
+    # без ожидания сети; живой статус подтянет refreshAllStatus в браузере).
+    printers_status = _get_cached_printer_statuses(printers)
 
     return templates.TemplateResponse(
         'printers_control.html',
@@ -451,8 +515,9 @@ async def api_printer_status(
     if not printer:
         raise HTTPException(status_code=404, detail='Принтер не найден')
 
-    status = check_printer_status_by_type(
-        printer.ip_address, printer.port_address, printer.printer_type, timeout=3.0
+    status = await _get_printer_status(
+        printer.ip_address, printer.port_address, printer.printer_type,
+        timeout=3.0,
     )
     return {
         'printer_id': str(printer.id),
@@ -472,7 +537,7 @@ async def api_printer_clear_queue(
     if not printer:
         raise HTTPException(status_code=404, detail='Принтер не найден')
 
-    result = clear_printer_queue(
+    result = await clear_printer_queue_async(
         printer.ip_address, printer.port_address, printer.printer_type
     )
     if not result.get('success'):
@@ -496,7 +561,7 @@ async def api_printer_restart(
     if not printer:
         raise HTTPException(status_code=404, detail='Принтер не найден')
 
-    result = restart_printer(
+    result = await restart_printer_async(
         printer.ip_address, printer.port_address, printer.printer_type
     )
     if not result.get('success'):

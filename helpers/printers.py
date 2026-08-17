@@ -1,5 +1,6 @@
 # helpers/printer_status.py
 
+import asyncio
 import socket
 import time
 from datetime import date
@@ -71,7 +72,7 @@ def check_printer_status(ip: str, port: int = 9100, timeout: float = 3.0) -> dic
             sock.sendall(b'~HS\r\n')
 
             # Читаем ответ с таймаутом (ждём минимум 2 строки из трёх)
-            sock.settimeout(2.0)
+            sock.settimeout(min(timeout, 2.0))
             response = b''
 
             while True:
@@ -353,8 +354,12 @@ def check_printer_status_tsc(ip: str, port: int = 9100, timeout: float = 3.0) ->
         with socket.create_connection((ip, port), timeout=timeout) as sock:
             time.sleep(0.05)
             sock.sendall(b'\x1b!S')
-            sock.settimeout(2.0)
+            sock.settimeout(min(timeout, 2.0))
             detailed = sock.recv(32)
+    except ConnectionResetError as e:
+        # Принтер занят и сбрасывает подключение (например, во время печати) —
+        # повторный запрос fallback'ом бессмыслен, возвращаем ошибку сразу.
+        return {'ok': False, 'error': f'ConnectionReset: {e}'}
     except Exception:
         # <ESC>!S может быть не поддержан прошивкой — пробуем fallback ниже.
         detailed = None
@@ -410,7 +415,7 @@ def check_printer_status_tsc(ip: str, port: int = 9100, timeout: float = 3.0) ->
         with socket.create_connection((ip, port), timeout=timeout) as sock:
             time.sleep(0.05)
             sock.sendall(b'\x1b!?')
-            sock.settimeout(2.0)
+            sock.settimeout(min(timeout, 2.0))
             data = sock.recv(16)
 
         if not data:
@@ -456,7 +461,9 @@ def check_printer_status_tsc(ip: str, port: int = 9100, timeout: float = 3.0) ->
         logger.warning(f"Таймаут при получении статуса от TSC {ip}:{port}")
         return {'ok': False, 'error': 'Timeout'}
     except Exception as e:
-        logger.exception(f"Ошибка при проверке статуса TSC {ip}:{port}: {e}")
+        # Сетевой сбой (сброс соединения и т.п.) — обычная ситуация для
+        # занятого принтера, логируем строкой без полного traceback.
+        logger.warning(f"Ошибка при проверке статуса TSC {ip}:{port}: {e}")
         return {'ok': False, 'error': str(e)}
 
 
@@ -497,3 +504,37 @@ def restart_printer(ip: str, port: int = 9100, printer_type: str = 'zebra') -> d
     if (printer_type or '').lower() == 'tsc':
         return send_printer_command(ip, port, b'\x1b!C')
     return send_printer_command(ip, port, b'~JR')
+
+
+# ---------------------------------------------------------------------------
+# Асинхронные обёртки
+# ---------------------------------------------------------------------------
+# Все сетевые функции выше — синхронные и блокирующие (socket.create_connection,
+# recv, sendall с таймаутами). В async-контексте (воркеры очереди печати,
+# веб-роутеры) их прямой вызов блокировал бы весь event loop, из-за чего
+# «зависали» страницы при печати или недоступном принтере. Обёртки выполняют
+# вызовы в отдельном потоке (asyncio.to_thread), не трогая event loop.
+
+async def check_printer_status_async(ip: str, port: int = 9100,
+                                     printer_type: str = 'zebra',
+                                     timeout: float = 3.0) -> dict:
+    """Проверка статуса принтера без блокировки event loop."""
+    return await asyncio.to_thread(
+        check_printer_status_by_type, ip, port, printer_type, timeout
+    )
+
+
+async def clear_printer_queue_async(ip: str, port: int = 9100,
+                                    printer_type: str = 'zebra') -> dict:
+    """Очистка очереди печати (Zebra ~JA / TSC CLS) без блокировки event loop."""
+    return await asyncio.to_thread(
+        clear_printer_queue, ip, port, printer_type
+    )
+
+
+async def restart_printer_async(ip: str, port: int = 9100,
+                                printer_type: str = 'zebra') -> dict:
+    """Перезапуск принтера (Zebra ~JR / TSC <ESC>!C) без блокировки event loop."""
+    return await asyncio.to_thread(
+        restart_printer, ip, port, printer_type
+    )
