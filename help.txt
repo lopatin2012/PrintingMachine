@@ -1,2 +1,2 @@
-alembic revision --autogenerate -m "" - Создать миграцию.
-alembic upgrade head - Применить миграцию.
+python -m alembic revision --autogenerate -m "" - Создать миграцию.
+python -m alembic upgrade head - Применить миграцию.
