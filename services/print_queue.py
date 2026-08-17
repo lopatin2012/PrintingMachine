@@ -11,8 +11,9 @@ from typing import Callable, AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from helpers.printers import (
-    check_printer_status_async, clear_printer_queue_async, replace_cyrillic_in_zpl,
-    substitute_placeholders, send_zpl_safely)
+    check_printer_status_async, check_printer_status_on_socket,
+    clear_printer_queue_async,
+    replace_cyrillic_in_zpl, substitute_placeholders, send_zpl_safely)
 from models import PrintJob
 
 logger = logging.getLogger(__name__)
@@ -36,10 +37,17 @@ BUFFER_TARGET_LEVEL = 60        # Zebra: запас, при котором во�
 # Сколько секунд ждать снижения буфера до целевого уровня, прежде чем сдаться.
 BUFFER_WAIT_MAX_SECONDS = 60
 
-# Количество этикеток в буфере TSC с хоста не запрашивается (см. docstring
-# check_printer_status_tsc) — контроль для TSC бинарный, по флагу
-# «Receive buffer full» из <ESC>!S: стоп при переполнении, продолжение —
-# когда флаг снят.
+# TSC (PEX и аналоги): буфер приёма МАЛЕНЬКИЙ (~8 КБ, подтверждено эмпирически
+# на PEX-2340: DRAM:8192 — константа, а приём перестаёт работать после
+# ~7-8 КБ входных данных). Количество этикеток/свободную память с хоста
+# достоверно узнать нельзя (~!A не меняется), поэтому контроль для TSC —
+# темповая отправка: не больше TSC_MAX_BUFFERED_BYTES за раз, затем пауза
+# TSC_DRAIN_WAIT, чтобы принтер успел напечатать и освободить буфер.
+# Флаг «Receive buffer full» из <ESC>!S остаётся страховкой.
+# Пауза 0.2с проверена на PEX-2340 с этикеткой ~4.5 КБ (10 этикеток без
+# блокировок); при более крупных этикетках при необходимости увеличить.
+TSC_MAX_BUFFERED_BYTES = 4000   # отправлять не более ~половины буфера за раз
+TSC_DRAIN_WAIT = 0.2            # пауза после бурста (принтер печатает/освобождает)
 
 
 @dataclass
@@ -324,11 +332,11 @@ class PrinterQueue:
             logger.error("Задание %s не найдено в БД при печати", task.job_id)
             return
 
-        # Очистка очереди принтера (Zebra ~JA / TSC CLS) — только при начале
+        # Очистка очереди принтера (Zebra ~JA / TSC <ESC>!.) — только при начале
         # задания (start_index == 0). При переподключении после сетевого сбоя
         # печать продолжается БЕЗ очистки, иначе теряются уже отправленные,
         # но ещё не напечатанные этикетки.
-        clear_cmd = b'CLS\r\n' if (task.printer_type or '').lower() == 'tsc' else b'~JA'
+        clear_cmd = b'\x1b!.' if (task.printer_type or '').lower() == 'tsc' else b'~JA'
 
         # Сеть — блокирующие операции выполняем в отдельном потоке, чтобы
         # длительный connect/отправка не «замораживали» event loop (веб).
@@ -347,7 +355,16 @@ class PrinterQueue:
 
             # Контроль статуса и буфера — раз в BUFFER_CHECK_INTERVAL по времени
             # (не по числу этикеток: принтер печатает с переменной скоростью).
+            # Во время печати статус запрашиваем ПО ТОМУ ЖЕ сокету — у TSC (PEX)
+            # параллельные подключения сбрасываются, а immediate-команды
+            # в рабочем соединении обрабатываются.
             last_buffer_check = time.monotonic() - BUFFER_CHECK_INTERVAL
+
+            # TSC: темповая отправка — у PEX буфер приёма ~8 КБ, поэтому
+            # отправляем не более TSC_MAX_BUFFERED_BYTES за раз, затем пауза.
+            is_tsc = (task.printer_type or '').lower() == 'tsc'
+            tsc_bytes_since_drain = 0
+
             for i in range(start_index, task.boxes_count):
                 if self._is_cancelled(task):
                     await self._mark_job_cancelled(task.job_id, db)
@@ -356,7 +373,7 @@ class PrinterQueue:
                 now = time.monotonic()
                 if now - last_buffer_check >= BUFFER_CHECK_INTERVAL:
                     last_buffer_check = now
-                    await self._control_printer_buffer(task)
+                    await self._control_printer_buffer(task, sock)
 
                 current_box = task.first_box + i
                 box_zpl = substitute_placeholders(
@@ -370,7 +387,14 @@ class PrinterQueue:
                     article=task.article,
                     uip_include_batch=task.uip_include_batch,
                 )
-                await asyncio.to_thread(send_zpl_safely, sock, box_zpl.encode('utf-8'))
+                label_bytes = box_zpl.encode('utf-8')
+                await asyncio.to_thread(send_zpl_safely, sock, label_bytes)
+
+                if is_tsc:
+                    tsc_bytes_since_drain += len(label_bytes)
+                    if tsc_bytes_since_drain >= TSC_MAX_BUFFERED_BYTES:
+                        tsc_bytes_since_drain = 0
+                        await asyncio.sleep(TSC_DRAIN_WAIT)
 
                 task.printed_count = i + 1
                 job.printed_count = task.printed_count
@@ -390,21 +414,30 @@ class PrinterQueue:
         await db.commit()
         logger.info("Задание %s успешно завершено", task.job_id)
 
-    async def _control_printer_buffer(self, task: PrintTask):
+    async def _control_printer_buffer(self, task: PrintTask, sock=None):
         """Проверка статуса принтера и поддержание запаса в его буфере.
 
         Не дожидаемся полной очистки буфера — держим запас этикеток:
           Zebra — уровень форматов в буфере (~HS eee): стоп при
                   BUFFER_MAX_LEVEL (или флаге переполнения), продолжение —
                   когда уровень ниже BUFFER_TARGET_LEVEL;
-          TSC   — флаг «Receive buffer full» (<ESC>!S): стоп при переполнении,
-                  продолжение — когда флаг снят (количество недоступно).
+          TSC   — темповая отправка в _print_boxes (буфер приёма ~8 КБ),
+                  здесь только страховка по флагу «Receive buffer full».
+
+        При печати (sock передан) статус запрашивается ПО ТОМУ ЖЕ СОКЕТУ:
+        у TSC (PEX) параллельные подключения во время печати сбрасываются,
+        а immediate-команды в рабочем соединении обрабатываются.
         """
         printer_addr = f"{task.printer_ip}:{task.printer_port}"
-        status = await check_printer_status_async(
-            task.printer_ip, task.printer_port, task.printer_type,
-            timeout=1.0,
-        )
+
+        if sock is not None:
+            status = await asyncio.to_thread(
+                check_printer_status_on_socket, sock, task.printer_type, 1.0)
+        else:
+            status = await check_printer_status_async(
+                task.printer_ip, task.printer_port, task.printer_type,
+                timeout=1.0,
+            )
 
         if not status.get('ok'):
             # Статус не получен (сбой сети / занятый принтер) — не останавливаем
@@ -424,6 +457,7 @@ class PrinterQueue:
         if status.get('paused'):
             raise ConnectionError("Принтер перешёл в паузу во время печати")
 
+        # Общий путь: флаг переполнения / количество форматов (Zebra).
         level_raw = status.get('formats_in_buffer', '0')
         level = int(level_raw) if level_raw not in ('?', '', None) else 0
         too_full = bool(status.get('buffer_full')) or (level >= BUFFER_MAX_LEVEL and level > 0)
@@ -435,9 +469,9 @@ class PrinterQueue:
             "Ждём снижения до %d, чтобы оставить запас этикеток...",
             printer_addr, level_raw, status.get('buffer_full'), BUFFER_TARGET_LEVEL,
         )
-        await self._wait_for_buffer_reserve(task, printer_addr)
+        await self._wait_for_buffer_reserve(task, printer_addr, sock)
 
-    async def _wait_for_buffer_reserve(self, task: PrintTask, printer_addr: str):
+    async def _wait_for_buffer_reserve(self, task: PrintTask, printer_addr: str, sock=None):
         """Ждать, пока буфер принтера снизится до целевого уровня запаса.
 
         Возобновляем отправку, не дожидаясь полного осушения:
@@ -449,10 +483,14 @@ class PrinterQueue:
                 raise ConnectionError("Задание отменено при ожидании освобождения буфера")
             await asyncio.sleep(BUFFER_CHECK_INTERVAL)
 
-            status = await check_printer_status_async(
-                task.printer_ip, task.printer_port, task.printer_type,
-                timeout=1.0,
-            )
+            if sock is not None:
+                status = await asyncio.to_thread(
+                    check_printer_status_on_socket, sock, task.printer_type, 1.0)
+            else:
+                status = await check_printer_status_async(
+                    task.printer_ip, task.printer_port, task.printer_type,
+                    timeout=1.0,
+                )
             if not status.get('ok'):
                 # Сбой сети при ожидании — пусть внешний цикл переподключения
                 # разберётся с соединением.

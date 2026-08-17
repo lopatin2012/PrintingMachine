@@ -36,6 +36,78 @@ def process_uip_batch(batch: str, length: int = 12) -> str:
     return batch + '0' * (length - len(batch))
 
 
+def _parse_zebra_hs(response: bytes) -> dict:
+    """Парсинг ответа Zebra ~HS (2-3 строки в блоках STX..ETX).
+
+    Используется и при опросе по отдельному подключению, и при опросе
+    по уже открытому сокету во время печати.
+    """
+    if not response:
+        return {'ok': False, 'error': 'Empty response'}
+
+    # Декодируем и очищаем от управляющих символов
+    raw = response.decode('ascii', errors='ignore')
+
+    # Извлекаем блоки между \x02 и \x03
+    blocks = re.findall(r'\x02(.*?)\x03', raw)
+
+    if blocks:
+        first_line = blocks[0]
+        second_line = blocks[1] if len(blocks) > 1 else ''
+    else:
+        lines = [line.strip() for line in raw.split('\r\n') if line.strip()]
+        if not lines:
+            return {'ok': False, 'error': 'Cannot parse response', 'raw': raw}
+        first_line = lines[0]
+        second_line = lines[1] if len(lines) > 1 else ''
+
+    p1 = first_line.split(',')
+    p2 = second_line.split(',') if second_line else []
+
+    # Строка 1: флаги по спецификации ~HS.
+    paper_out = len(p1) > 1 and p1[1] == '1'
+    paused = len(p1) > 2 and p1[2] == '1'
+    formats_in_buffer = p1[4] if len(p1) > 4 else '0'
+    buffer_full = len(p1) > 5 and p1[5] == '1'
+    under_temp = len(p1) > 10 and p1[10] == '1'
+    over_temp = len(p1) > 11 and p1[11] == '1'
+
+    # Строка 2: head up (o) и ribbon out (p).
+    head_up = len(p2) > 2 and p2[2] == '1'
+    ribbon_out = len(p2) > 3 and p2[3] == '1'
+
+    errors = []
+    if paper_out:
+        errors.append('нет бумаги')
+    if ribbon_out:
+        errors.append('нет ленты')
+    if head_up:
+        errors.append('открыта печатающая головка')
+    if under_temp:
+        errors.append('низкая температура головки')
+    if over_temp:
+        errors.append('высокая температура головки')
+    if buffer_full:
+        errors.append('буфер переполнен')
+
+    return {
+        'ok': True,
+        'paused': paused,
+        'error_flag': bool(errors),
+        'errors': errors,
+        'paper_out': paper_out,
+        'ribbon_out': ribbon_out,
+        'head_up': head_up,
+        'buffer_full': buffer_full,
+        'formats_in_buffer': formats_in_buffer,
+        'message': 'Готов к печати' if not errors and not paused else (
+            'Пауза' if paused and not errors else '; '.join(errors)
+        ),
+        'raw_first_line': first_line,
+        'raw_full': raw[:200] + ('...' if len(raw) > 200 else ''),
+    }
+
+
 def check_printer_status(ip: str, port: int = 9100, timeout: float = 3.0) -> dict:
     """
     Получение статуса Zebra через команду ~HS.
@@ -89,67 +161,7 @@ def check_printer_status(ip: str, port: int = 9100, timeout: float = 3.0) -> dic
             if not response:
                 return {'ok': False, 'error': 'Empty response'}
 
-            # Декодируем и очищаем от управляющих символов
-            raw = response.decode('ascii', errors='ignore')
-
-            # Извлекаем блоки между \x02 и \x03
-            blocks = re.findall(r'\x02(.*?)\x03', raw)
-
-            if blocks:
-                first_line = blocks[0]
-                second_line = blocks[1] if len(blocks) > 1 else ''
-            else:
-                lines = [line.strip() for line in raw.split('\r\n') if line.strip()]
-                if not lines:
-                    return {'ok': False, 'error': 'Cannot parse response', 'raw': raw}
-                first_line = lines[0]
-                second_line = lines[1] if len(lines) > 1 else ''
-
-            p1 = first_line.split(',')
-            p2 = second_line.split(',') if second_line else []
-
-            # Строка 1: флаги по спецификации ~HS.
-            paper_out = len(p1) > 1 and p1[1] == '1'
-            paused = len(p1) > 2 and p1[2] == '1'
-            formats_in_buffer = p1[4] if len(p1) > 4 else '0'
-            buffer_full = len(p1) > 5 and p1[5] == '1'
-            under_temp = len(p1) > 10 and p1[10] == '1'
-            over_temp = len(p1) > 11 and p1[11] == '1'
-
-            # Строка 2: head up (o) и ribbon out (p).
-            head_up = len(p2) > 2 and p2[2] == '1'
-            ribbon_out = len(p2) > 3 and p2[3] == '1'
-
-            errors = []
-            if paper_out:
-                errors.append('нет бумаги')
-            if ribbon_out:
-                errors.append('нет ленты')
-            if head_up:
-                errors.append('открыта печатающая головка')
-            if under_temp:
-                errors.append('низкая температура головки')
-            if over_temp:
-                errors.append('высокая температура головки')
-            if buffer_full:
-                errors.append('буфер переполнен')
-
-            return {
-                'ok': True,
-                'paused': paused,
-                'error_flag': bool(errors),
-                'errors': errors,
-                'paper_out': paper_out,
-                'ribbon_out': ribbon_out,
-                'head_up': head_up,
-                'buffer_full': buffer_full,
-                'formats_in_buffer': formats_in_buffer,
-                'message': 'Готов к печати' if not errors and not paused else (
-                    'Пауза' if paused and not errors else '; '.join(errors)
-                ),
-                'raw_first_line': first_line,
-                'raw_full': raw[:200] + ('...' if len(raw) > 200 else ''),
-            }
+            return _parse_zebra_hs(response)
 
     except ConnectionRefusedError:
         logger.error(f"Принтер {ip}:{port} отклоняет подключение")
@@ -329,6 +341,96 @@ def send_zpl_safely(sock: socket.socket, data: bytes, chunk_size: int = 4096) ->
 # TSC   — TSPL: <ESC>!? / <ESC>!S (статус), CLS (очистка буфера), <ESC>!C (перезапуск)
 
 
+def _parse_tsc_status(data: bytes) -> dict:
+    """Парсинг расширенного статуса TSC <ESC>!S: <STX>[4 байта]<ETX><CR><LF>.
+
+    Байт 1 — состояние: '@' (0x40) готов, 'P' (0x50) печать, 'W' (0x57)
+    формирование изображения, '`' (0x60) пауза, 'E' (0x45) ошибка.
+    Байт 2 — предупреждения: 'H' (0x48) = Receive buffer full.
+    Байты 3-4 — ошибки ('A' перегрев, 'D' ошибка головки, 'H' застревание
+    резака, 'P' нехватка памяти, '`' головка открыта и т.д.).
+    """
+    start = data.find(b'\x02')   # <STX>
+    end = data.find(b'\x03')     # <ETX>
+    if start == -1 or end == -1 or end - start < 5:
+        return {'ok': False, 'error': 'Cannot parse <ESC>!S'}
+
+    msg, warn, err1, err2 = data[start + 1:start + 5]
+    errors = []
+    if err1 == 0x41:
+        errors.append('перегрев печатающей головки')
+    if err1 == 0x42:
+        errors.append('перегрев шагового двигателя')
+    if err1 == 0x44:
+        errors.append('ошибка печатающей головки')
+    if err1 == 0x48:
+        errors.append('застревание резака')
+    if err1 == 0x50:
+        errors.append('недостаточно памяти')
+    if err2 == 0x41:
+        errors.append('закончилась бумага')
+    if err2 == 0x42:
+        errors.append('замятие бумаги')
+    if err2 == 0x44:
+        errors.append('закончилась лента (риббон)')
+    if err2 == 0x48:
+        errors.append('застревание ленты')
+    if err2 == 0x60:
+        errors.append('открыта печатающая головка')
+
+    paused = msg == 0x60     # '`'
+    printing = msg in (0x50, 0x57)  # 'P' / 'W'
+    buffer_full = warn == 0x48      # 'H'
+
+    return {
+        'ok': True,
+        'paused': paused,
+        'printing': printing,
+        'error_flag': bool(errors),
+        'errors': errors,
+        'buffer_full': buffer_full,
+        # Количество форматов TSC недоступно хосту (см. docstring).
+        'formats_in_buffer': '?',
+        'message': 'Готов к печати' if not errors and not paused else (
+            'Идёт печать' if printing and not errors else '; '.join(errors) or 'Неизвестный статус'
+        ),
+        'raw': f"{chr(msg)}{chr(warn)}{chr(err1)}{chr(err2)}",
+    }
+
+
+def check_printer_status_on_socket(sock, printer_type: str = 'zebra',
+                                   timeout: float = 1.0) -> dict:
+    """Статус принтера по УЖЕ ОТКРЫТОМУ сокету (immediate-команды).
+
+    Используется во время печати: некоторые TSC-принтеры (PEX) сбрасывают
+    параллельные TCP-подключения, но отвечают на статус-команды в том же
+    соединении, через которое идёт печать.
+    """
+    try:
+        sock.settimeout(min(timeout, 2.0))
+        if (printer_type or '').lower() == 'tsc':
+            sock.sendall(b'\x1b!S')
+            data = sock.recv(32)
+            return _parse_tsc_status(data)
+
+        # Zebra: ~HS
+        sock.sendall(b'~HS\r\n')
+        response = b''
+        while True:
+            try:
+                chunk = sock.recv(512)
+                if not chunk:
+                    break
+                response += chunk
+                if response.count(b'\x03\r\n') >= 2:
+                    break
+            except socket.timeout:
+                break
+        return _parse_zebra_hs(response)
+    except (socket.timeout, ConnectionResetError, ConnectionError, OSError) as e:
+        return {'ok': False, 'error': str(e)}
+
+
 def check_printer_status_tsc(ip: str, port: int = 9100, timeout: float = 3.0) -> dict:
     """Статус TSC-принтера.
 
@@ -341,9 +443,9 @@ def check_printer_status_tsc(ip: str, port: int = 9100, timeout: float = 3.0) ->
       байты 3-4 — ошибки ('A' перегрев, 'D' ошибка головки, 'H' застревание
                    резака, 'P' нехватка памяти, '`' головка открыта и т.д.).
 
-    Количество этикеток в буфере TSC не запрашивается с хоста (функция LOB()
-    из документации выполняется только внутри TSPL-программы), поэтому
-    контроль буфера для TSC — бинарный: по флагу переполнения.
+    Количество этикеток в буфере TSC с хоста не запрашивается, свободная
+    память (~!A) на PEX — константа (буфер приёма ~8 КБ), поэтому контроль
+    буфера для TSC — темповая отправка + флаг переполнения (<ESC>!S).
 
     Если <ESC>!S не поддерживается (прошивка старше V6.29) — fallback на
     <ESC>!? (1 байт-маска) без контроля буфера.
@@ -365,50 +467,11 @@ def check_printer_status_tsc(ip: str, port: int = 9100, timeout: float = 3.0) ->
         detailed = None
 
     if detailed:
-        start = detailed.find(b'\x02')   # <STX>
-        end = detailed.find(b'\x03')     # <ETX>
-        if start != -1 and end != -1 and end - start >= 5:
-            msg, warn, err1, err2 = detailed[start + 1:start + 5]
-            errors = []
-            if err1 == 0x41:
-                errors.append('перегрев печатающей головки')
-            if err1 == 0x42:
-                errors.append('перегрев шагового двигателя')
-            if err1 == 0x44:
-                errors.append('ошибка печатающей головки')
-            if err1 == 0x48:
-                errors.append('застревание резака')
-            if err1 == 0x50:
-                errors.append('недостаточно памяти')
-            if err2 == 0x41:
-                errors.append('закончилась бумага')
-            if err2 == 0x42:
-                errors.append('замятие бумаги')
-            if err2 == 0x44:
-                errors.append('закончилась лента (риббон)')
-            if err2 == 0x48:
-                errors.append('застревание ленты')
-            if err2 == 0x60:
-                errors.append('открыта печатающая головка')
-
-            paused = msg == 0x60     # '`'
-            printing = msg in (0x50, 0x57)  # 'P' / 'W'
-            buffer_full = warn == 0x48      # 'H'
-
-            return {
-                'ok': True,
-                'paused': paused,
-                'printing': printing,
-                'error_flag': bool(errors),
-                'errors': errors,
-                'buffer_full': buffer_full,
-                # Количество форматов TSC недоступно хосту (см. docstring).
-                'formats_in_buffer': '?',
-                'message': 'Готов к печати' if not errors and not paused else (
-                    'Идёт печать' if printing and not errors else '; '.join(errors) or 'Неизвестный статус'
-                ),
-                'raw': f"{chr(msg)}{chr(warn)}{chr(err1)}{chr(err2)}",
-            }
+        parsed = _parse_tsc_status(detailed)
+        if parsed.get('ok'):
+            return parsed
+        # Ответ не распарсился — принтер, вероятно, не поддерживает <ESC>!S,
+        # пробуем fallback ниже.
 
     # --- Fallback: <ESC>!? (1 байт-маска), если <ESC>!S не поддерживается ---
     try:
@@ -492,10 +555,12 @@ def clear_printer_queue(ip: str, port: int = 9100, printer_type: str = 'zebra') 
     """Очистка очереди печати принтера.
 
     Zebra — ~JA (отмена всех заданий в очереди принтера);
-    TSC   — CLS (очистка буфера изображения, ожидающие этикетки).
+    TSC   — <ESC>!. (immediate-команда отмены всех заданий печати,
+            работает даже когда принтер занят; CLS лишь чистит
+            буфер изображения текущего задания и не отменяет очередь).
     """
     if (printer_type or '').lower() == 'tsc':
-        return send_printer_command(ip, port, b'CLS\r\n')
+        return send_printer_command(ip, port, b'\x1b!.')
     return send_printer_command(ip, port, b'~JA')
 
 
