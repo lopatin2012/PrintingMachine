@@ -4,7 +4,7 @@ from uuid import UUID
 from datetime import date
 
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional, List
+from typing import Optional
 from datetime import datetime
 
 # ---------- Цех ----------
@@ -64,7 +64,11 @@ class LineResponse(LineInDBBase):
     workshop: Optional[WorkshopResponse] = Field(None, description='Цех линии')
 
 # ---------- Принтер ----------
-PRINTER_TYPES = ('zebra', 'tsc')
+# Список поддерживаемых типов формируется из реестра драйверов
+# (helpers/printer_drivers.py) — новый драйвер автоматически попадает сюда.
+from helpers.printer_drivers import get_printer_driver, printer_types
+
+PRINTER_TYPES = tuple(t['key'] for t in printer_types())
 
 class PrinterBase(BaseModel):
     """Базовая схема принтера"""
@@ -72,7 +76,7 @@ class PrinterBase(BaseModel):
     name: str = Field(..., max_length=50, description='Наименование')
     ip_address: str = Field(..., max_length=45, description='IP-адрес')
     port_address: int = Field(9100, ge=1, le=65535, description='Порт')
-    printer_type: str = Field('zebra', description='Тип принтера (zebra/tsc)')
+    printer_type: str = Field('zebra', description=f'Тип принтера ({"/".join(PRINTER_TYPES)})')
     buffer_limit: int = Field(25, ge=1, le=5000, description='Макс. этикеток в очереди принтера')
     batch_size: int = Field(5, ge=1, le=500, description='Отправка пачками по N этикеток')
 
@@ -89,10 +93,12 @@ class PrinterBase(BaseModel):
     @field_validator('printer_type')
     @classmethod
     def validate_printer_type(cls, v: str):
-        """Валидация типа принтера"""
+        """Валидация типа принтера по реестру драйверов"""
         v = (v or 'zebra').strip().lower()
-        if v not in PRINTER_TYPES:
-            raise ValueError('Тип принтера должен быть zebra или tsc')
+        if get_printer_driver(v) is None:
+            raise ValueError(
+                f'Тип принтера должен быть одним из: {", ".join(PRINTER_TYPES)}'
+            )
         return v
 
 
@@ -106,7 +112,7 @@ class PrinterUpdate(BaseModel):
     name: Optional[str] = Field(None, max_length=50, description='Наименование')
     ip_address: str = Field(None, description='IP-адрес')
     port_address: Optional[int] = Field(None, ge=1, le=65535, description='Порт')
-    printer_type: Optional[str] = Field(None, description='Тип принтера (zebra/tsc)')
+    printer_type: Optional[str] = Field(None, description=f'Тип принтера ({"/".join(PRINTER_TYPES)})')
     buffer_limit: Optional[int] = Field(None, ge=1, le=5000, description='Макс. этикеток в очереди принтера')
     batch_size: Optional[int] = Field(None, ge=1, le=500, description='Отправка пачками по N этикеток')
 
@@ -123,12 +129,14 @@ class PrinterUpdate(BaseModel):
     @field_validator('printer_type')
     @classmethod
     def validate_printer_type(cls, v: str):
-        """Валидация типа принтера"""
+        """Валидация типа принтера по реестру драйверов"""
         if v is None:
             return v
         v = v.strip().lower()
-        if v not in PRINTER_TYPES:
-            raise ValueError('Тип принтера должен быть zebra или tsc')
+        if get_printer_driver(v) is None:
+            raise ValueError(
+                f'Тип принтера должен быть одним из: {", ".join(PRINTER_TYPES)}'
+            )
         return v
 
 class PrinterInDBBase(PrinterBase):
@@ -392,17 +400,3 @@ class PrintJobResponse(PrintJobInDBBase):
     product: Optional[ProductResponse] = Field(None, description='Продукт')
     printer: Optional[PrinterResponse] = Field(None, description='Принтер')
     template: Optional[CodeTemplateResponse] = Field(None, description='Шаблон')
-
-# ---------- Дополнительные схемы для вывода списков ----------
-
-class WorkshopWithLinesResponse(WorkshopResponse):
-    """Цех со списком линий"""
-    lines: List[LineResponse] = Field(default_factory=list, description='Линии цеха')
-
-class LineWithPrintersResponse(LineResponse):
-    """Линии со списком принтеров"""
-    printers: List[PrinterResponse] = Field(default_factory=list, description='Принтеры линии')
-
-class PrinterWithTemplatesResponse(PrinterResponse):
-    """Принтер со списком шаблонов"""
-    code_templates: List[CodeTemplateResponse] = Field(default_factory=list, description='Шаблоны кодов принтера')

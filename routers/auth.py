@@ -14,7 +14,7 @@ from auth_utils import get_password_hash, verify_password
 from crud.user import UserCRUD
 
 from templates_config import templates
-from security import create_access_token, oauth2_scheme, get_current_admin
+from security import create_access_token, get_current_admin
 
 router = APIRouter()
 user_crud = UserCRUD()
@@ -173,17 +173,3 @@ async def logout(request: Request):
     response = RedirectResponse(url='/', status_code=status.HTTP_303_SEE_OTHER)
     response.delete_cookie(key='access_token')
     return response
-
-@router.get('/protected', response_class=HTMLResponse)
-async def protected_route(
-        request: Request,
-        current_user: User = Depends(oauth2_scheme)
-):
-    """Защищённый маршрут для теста"""
-    return templates.TemplateResponse(
-        'protected.html',
-        {
-            'request': request,
-            'user': current_user
-        }
-    )

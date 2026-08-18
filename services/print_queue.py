@@ -2,7 +2,6 @@
 import asyncio
 import logging
 import os
-import re
 import socket
 import time
 from dataclasses import dataclass, field
@@ -12,9 +11,10 @@ from typing import Callable, AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from helpers.printer_drivers import get_driver_or_default
 from helpers.printers import (
     check_printer_status_async, check_printer_status_on_socket,
-    check_tsc_mileage, clear_printer_queue_async,
+    clear_printer_queue_async,
     replace_cyrillic_in_zpl, substitute_placeholders, send_zpl_safely)
 from models import PrintJob
 
@@ -53,29 +53,15 @@ BUFFER_WAIT_MAX_SECONDS = 60
 TSC_SEND_TIMEOUT = float(os.getenv('TSC_SEND_TIMEOUT', '4.0'))  # таймаут отправки, сек
 TSC_MILEAGE_TIMEOUT = float(os.getenv('TSC_MILEAGE_TIMEOUT', '2.0'))  # запрос пробега, сек
 TSC_MILEAGE_POLL = float(os.getenv('TSC_MILEAGE_POLL', '0.5'))   # опрос пробега при ожидании, сек
-TSC_MILEAGE_STALL_WARN = 60      # предупреждение, если печать не идёт дольше, сек
+# Предупреждение, если печать не идёт дольше (и TSC-гейт по пробегу,
+# и ZPL-гейт по форматам в буфере).
+PRINT_STALL_WARN_SECONDS = 60
 # Пауза после очистки очереди перед запросом базового пробега: принтеру нужно
 # время обработать <ESC>!.; слишком малая пауза (0.3с) давала сбои — 1с надёжно.
 TSC_CLEAR_SETTLE = float(os.getenv('TSC_CLEAR_SETTLE', '1.0'))
-TSC_DPI = int(os.getenv('TSC_DPI', '203'))
 
-
-def _zpl_label_length_inches(zpl_code: str):
-    """Длина этикетки в дюймах из ^LL (точек) и плотности (TSC_DPI, 203).
-
-    Приоритет: TSC_MILEAGE_PER_LABEL (дюймы на этикетку), затем расчёт
-    из шаблона. Вернёт None, если вычислить нельзя (гейт отключится).
-    """
-    override = os.getenv('TSC_MILEAGE_PER_LABEL')
-    if override:
-        try:
-            return float(override)
-        except ValueError:
-            logger.warning('TSC_MILEAGE_PER_LABEL=%r — не число, игнорирую', override)
-    m = re.search(r'\^LL(\d+)', zpl_code or '')
-    if not m:
-        return None
-    return int(m.group(1)) / TSC_DPI
+# Длина этикетки в дюймах для контроля очереди по пробегу вычисляет драйвер
+# TSC (TscDriver.label_length_inches: ^LL + TSC_DPI / TSC_MILEAGE_PER_LABEL).
 
 
 @dataclass
@@ -367,48 +353,62 @@ class PrinterQueue:
             logger.error("Задание %s не найдено в БД при печати", task.job_id)
             return
 
-        # Очистка очереди принтера (Zebra ~JA / TSC <ESC>!.) — только при начале
+        # Поведение, специфичное для типа принтера, определяется драйвером
+        # (helpers/printer_drivers.py):
+        #   * batch_send     — пачечная отправка: каждая пачка своим
+        #                      TCP-подключением. Для TSC это требование
+        #                      (одно соединение одновременно), для ZPL —
+        #                      ограничение очереди (не «заливать» медленный
+        #                      принтер больше, чем на buffer_limit этикеток);
+        #   * mileage_gate   — контроль очереди по пробегу (аппликаторы TSC);
+        #   * buffer_control — контроль очереди по числу форматов (~HS, ZPL)
+        #                      или флагу переполнения (TSC).
+        driver = get_driver_or_default(task.printer_type)
+        batch_mode = driver.batch_send
+
+        # Очистка очереди принтера (команда из драйвера) — только при начале
         # задания (start_index == 0). При переподключении после сетевого сбоя
         # печать продолжается БЕЗ очистки, иначе теряются уже отправленные,
         # но ещё не напечатанные этикетки.
-        clear_cmd = b'\x1b!.' if (task.printer_type or '').lower() == 'tsc' else b'~JA'
-        is_tsc = (task.printer_type or '').lower() == 'tsc'
 
         # Сеть — блокирующие операции выполняем в отдельном потоке, чтобы
         # длительный connect/отправка не «замораживали» event loop (веб).
-        # Zebra — постоянное соединение; TSC — пачками, каждую пачку СВОИМ
-        # подключением (PEX принимает только одно соединение одновременно,
-        # поэтому между пачками принтер должен быть свободен для статуса).
+        # Пачечные драйверы (TSC, ZPL) каждую пачку отправляют СВОИМ
+        # подключением — между пачками принтер свободен и отвечает на запросы
+        # статуса/пробега. Непрерывные драйверы (если появятся) держат
+        # постоянное соединение.
         sock = None
-        if not is_tsc:
+        if not batch_mode:
             sock = await asyncio.to_thread(
                 socket.create_connection,
                 (task.printer_ip, task.printer_port), 10,
             )
         try:
             if start_index == 0:
-                if is_tsc:
+                if batch_mode:
                     # Очистка очереди отдельным коротким подключением.
                     await clear_printer_queue_async(
                         task.printer_ip, task.printer_port, task.printer_type)
                     # Даём принтеру обработать очистку (0.3с мало — 1с надёжно).
                     await asyncio.sleep(TSC_CLEAR_SETTLE)
-                    # База пробега (~!@) — свежее подключение работает.
-                    for _attempt in range(3):
-                        task.tsc_mileage_start = await asyncio.to_thread(
-                            check_tsc_mileage,
-                            task.printer_ip, task.printer_port, TSC_MILEAGE_TIMEOUT) or 0
-                        if task.tsc_mileage_start:
-                            break
-                        await asyncio.sleep(1)
-                    if not task.tsc_mileage_start:
-                        logger.warning(
-                            "TSC %s:%d: не удалось получить базовый пробег — "
-                            "контроль очереди по пробегу отключён",
-                            task.printer_ip, task.printer_port,
-                        )
+                    # База пробега — свежее подключение работает.
+                    if driver.mileage_gate:
+                        for _attempt in range(3):
+                            task.tsc_mileage_start = await asyncio.to_thread(
+                                driver.mileage,
+                                task.printer_ip, task.printer_port,
+                                TSC_MILEAGE_TIMEOUT) or 0
+                            if task.tsc_mileage_start:
+                                break
+                            await asyncio.sleep(1)
+                        if not task.tsc_mileage_start:
+                            logger.warning(
+                                "%s %s:%d: не удалось получить базовый пробег — "
+                                "контроль очереди по пробегу отключён",
+                                driver.label, task.printer_ip, task.printer_port,
+                            )
                 else:
-                    await asyncio.to_thread(sock.sendall, clear_cmd)
+                    await asyncio.to_thread(sock.sendall, driver.clear_cmd)
             else:
                 logger.info(
                     "Задание %s: докачка с коробки %d без очистки очереди принтера",
@@ -418,14 +418,14 @@ class PrinterQueue:
             last_buffer_check = time.monotonic() - BUFFER_CHECK_INTERVAL
             batch_conn = None
             labels_in_batch = 0
-            tsc_per_label = None
-            if is_tsc:
-                tsc_per_label = _zpl_label_length_inches(prepared_code)
-                if tsc_per_label is None:
+            label_inches = None
+            if driver.mileage_gate:
+                label_inches = driver.label_length_inches(prepared_code)
+                if label_inches is None:
                     logger.warning(
-                        "TSC %s:%d: не удалось вычислить длину этикетки (нет ^LL / "
+                        "%s %s:%d: не удалось вычислить длину этикетки (нет ^LL / "
                         "TSC_MILEAGE_PER_LABEL) — гейт очереди отключён",
-                        task.printer_ip, task.printer_port,
+                        driver.label, task.printer_ip, task.printer_port,
                     )
 
             for i in range(start_index, task.boxes_count):
@@ -433,16 +433,15 @@ class PrinterQueue:
                     await self._mark_job_cancelled(task.job_id, db, task.printed_count)
                     return
 
-                if is_tsc:
+                if batch_mode:
                     if batch_conn is None:
                         # Начало новой пачки. Гейт очереди выполняется ТОЛЬКО
-                        # здесь — когда соединение принтера закрыто: PEX принимает
-                        # одно TCP-подключение, и опрос пробега/статуса возможен
-                        # только между пачками (внутри пачки запросы «висят»).
+                        # здесь — когда соединение принтера закрыто (опрос
+                        # статуса/пробега возможен только между пачками).
                         # Не отправляем больше buffer_limit этикеток «впереди»
-                        # реальной печати (наш счётчик − напечатанные по пробегу).
-                        if tsc_per_label and task.tsc_mileage_start:
-                            await self._wait_for_label_consumption(task, i, tsc_per_label)
+                        # реальной печати: TSC — по пробегу (~!@),
+                        # ZPL — по числу форматов в буфере (~HS eee).
+                        await self._wait_for_batch_gate(task, i, driver, label_inches)
                         # Пачка: своё подключение на batch_size этикеток.
                         batch_conn = await asyncio.to_thread(
                             socket.create_connection,
@@ -450,7 +449,8 @@ class PrinterQueue:
                         batch_conn.settimeout(TSC_SEND_TIMEOUT)
                         labels_in_batch = 0
                 else:
-                    # Zebra: контроль буфера по форматам (~HS eee) раз в секунду.
+                    # Непрерывный режим (драйверы без batch_send): контроль
+                    # буфера по числу форматов (~HS eee) раз в секунду.
                     now = time.monotonic()
                     if now - last_buffer_check >= BUFFER_CHECK_INTERVAL:
                         last_buffer_check = now
@@ -470,9 +470,9 @@ class PrinterQueue:
                 )
                 label_bytes = box_zpl.encode('utf-8')
                 await asyncio.to_thread(
-                    send_zpl_safely, batch_conn if is_tsc else sock, label_bytes)
+                    send_zpl_safely, batch_conn if batch_mode else sock, label_bytes)
 
-                if is_tsc:
+                if batch_mode:
                     labels_in_batch += 1
                     if labels_in_batch >= max(1, task.batch_size):
                         # Пачка отправлена — закрываем соединение (принтер свободен).
@@ -486,17 +486,17 @@ class PrinterQueue:
                 task.printed_count = i + 1
                 job.printed_count = task.printed_count
 
-                # Прогресс в БД: для TSC коммитим РАЗ В ПАЧКУ (каждые
-                # batch_size этикеток) — гейт ограничивает очередь буфером,
-                # и счётчик должен обновляться в пределах пачки. Для Zebra —
-                # пакетно каждые PROGRESS_COMMIT_EVERY.
-                if is_tsc:
+                # Прогресс в БД: для пачечных драйверов коммитим РАЗ В ПАЧКУ
+                # (каждые batch_size этикеток) — гейт ограничивает очередь
+                # буфером, и счётчик должен обновляться в пределах пачки.
+                # Для непрерывных — пакетно каждые PROGRESS_COMMIT_EVERY.
+                if batch_mode:
                     if (i + 1) % max(1, task.batch_size) == 0:
                         await db.commit()
                 elif (i + 1) % PROGRESS_COMMIT_EVERY == 0:
                     await db.commit()
 
-                if not is_tsc:
+                if not batch_mode:
                     await asyncio.sleep(0.1)
         finally:
             if sock is not None:
@@ -570,6 +570,7 @@ class PrinterQueue:
         поэтому метод вызывается только при batch_conn is None).
         """
         printer_addr = f"{task.printer_ip}:{task.printer_port}"
+        driver = get_driver_or_default(task.printer_type)
         batch_size = max(1, task.batch_size)
         required_printed = max(0, i + batch_size - max(1, task.buffer_limit))
         stall_warned = False
@@ -580,7 +581,7 @@ class PrinterQueue:
                 raise ConnectionError("Задание отменено при ожидании печати аппликатора")
 
             m = await asyncio.to_thread(
-                check_tsc_mileage,
+                driver.mileage,
                 task.printer_ip, task.printer_port, TSC_MILEAGE_TIMEOUT)
             if m is None:
                 # Пробег не узнать (принтер занят) — ждём и пробуем снова.
@@ -592,14 +593,81 @@ class PrinterQueue:
             if printed >= required_printed:
                 return
 
-            if not stall_warned and time.monotonic() - stall_since > TSC_MILEAGE_STALL_WARN:
+            if not stall_warned and time.monotonic() - stall_since > PRINT_STALL_WARN_SECONDS:
                 stall_warned = True
                 logger.warning(
                     "Принтер %s (аппликатор) не печатает уже %dс — очередь заполнена "
                     "(отправлено %d, напечатано ~%d). Жду сигнала датчика линии",
-                    printer_addr, TSC_MILEAGE_STALL_WARN, i, int(printed),
+                    printer_addr, PRINT_STALL_WARN_SECONDS, i, int(printed),
                 )
             await asyncio.sleep(TSC_MILEAGE_POLL)
+
+    async def _wait_for_batch_gate(self, task: PrintTask, i: int, driver, label_inches):
+        """Гейт очереди перед пачкой: не отправлять больше buffer_limit
+        этикеток «впереди» реальной печати.
+
+        Метод зависит от возможностей драйвера:
+          * mileage_gate        (TSC) — контроль по пробегу печати (~!@);
+          * buffer_control == 'formats' (ZPL/Zebra) — по числу форматов
+            в буфере принтера (~HS eee).
+        """
+        if driver.mileage_gate:
+            if label_inches and task.tsc_mileage_start:
+                await self._wait_for_label_consumption(task, i, label_inches)
+        elif driver.buffer_control == 'formats':
+            await self._wait_for_formats_consumption(task, i)
+
+    async def _wait_for_formats_consumption(self, task: PrintTask, i: int):
+        """ZPL/Zebra: гейт очереди по числу форматов в буфере (~HS eee).
+
+        Перед отправкой пачки ждём, пока «впереди» реальной печати останется
+        не больше buffer_limit − batch_size форматов — тогда после отправки
+        пачки в очереди принтера будет не больше buffer_limit этикеток.
+        Принтер может печатать медленно: ждём столько, сколько нужно, и не
+        «заливаем» его очередями (как TSC по пробегу — здесь по ~HS).
+
+        Уровень запрашивается СВЕЖИМ подключением (между пачками принтер
+        свободен; внутри пачки соединение занято — поэтому метод вызывается
+        только при batch_conn is None).
+        """
+        printer_addr = f"{task.printer_ip}:{task.printer_port}"
+        batch_size = max(1, task.batch_size)
+        buffer_limit = max(1, task.buffer_limit)
+        max_ahead = max(0, buffer_limit - batch_size)
+        stall_warned = False
+        stall_since = time.monotonic()
+
+        while True:
+            if self._is_cancelled(task):
+                raise ConnectionError("Задание отменено при ожидании печати")
+
+            status = await check_printer_status_async(
+                task.printer_ip, task.printer_port, task.printer_type, timeout=1.0,
+            )
+            if not status.get('ok'):
+                # Принтер/сеть недоступны — ждём и пробуем снова.
+                await asyncio.sleep(BUFFER_CHECK_INTERVAL)
+                continue
+            if status.get('paused'):
+                raise ConnectionError("Принтер перешёл в паузу во время печати")
+
+            level_raw = status.get('formats_in_buffer', '0')
+            if level_raw in ('?', '', None):
+                # Уровень буфера недоступен — гейт отключается (печатаем пачками
+                # без ограничения, как раньше).
+                return
+            level = int(level_raw)
+            if level <= max_ahead:
+                return
+
+            if not stall_warned and time.monotonic() - stall_since > PRINT_STALL_WARN_SECONDS:
+                stall_warned = True
+                logger.warning(
+                    "Принтер %s не печатает уже %dс — в очереди принтера %d этикеток "
+                    "(лимит %d). Жду освобождения (принтер может печатать медленно)",
+                    printer_addr, PRINT_STALL_WARN_SECONDS, level, buffer_limit,
+                )
+            await asyncio.sleep(BUFFER_CHECK_INTERVAL)
 
     async def _control_printer_buffer(self, task: PrintTask, sock=None):
         """Проверка статуса принтера и поддержание запаса в его буфере.
@@ -674,8 +742,8 @@ class PrinterQueue:
             if status.get('buffer_full'):
                 continue  # буфер всё ещё заполнен
 
-            if (task.printer_type or '').lower() == 'tsc':
-                logger.info("Буфер принтера %s освободился (TSC), продолжаем", printer_addr)
+            if get_driver_or_default(task.printer_type).buffer_control == 'full_flag':
+                logger.info("Буфер принтера %s освободился, продолжаем", printer_addr)
                 return
 
             level_raw = status.get('formats_in_buffer', '0')

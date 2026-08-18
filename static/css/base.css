@@ -419,7 +419,7 @@ table th, table td {
 }
 
 .form-group textarea {
-    min-height: 120px;
+    height: 100px;
     resize: vertical;
     font-family: 'Courier New', monospace;
     font-size: 13px;

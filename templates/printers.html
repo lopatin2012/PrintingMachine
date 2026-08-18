@@ -251,11 +251,16 @@
                             required
                             class="form-input"
                         >
-                            <option value="zebra">Zebra</option>
-                            <option value="tsc">TSC</option>
+                            {% for t in printer_types %}
+                            <option value="{{ t.key }}">{{ t.label }}</option>
+                            {% endfor %}
                         </select>
                     </div>
-                    <small class="form-hint">Производитель принтера: Zebra или TSC</small>
+                    <small class="form-hint">
+                        Список формируется из зарегистрированных драйверов
+                        (helpers/printer_drivers.py){% if printer_types %}:
+                        {{ printer_types[0].description }}{% endif %}
+                    </small>
                 </div>
 
                 <div class="form-group">
@@ -413,6 +418,20 @@ function filterTable() {
     });
 }
 
+// Установить тип принтера в выпадающем списке; для неизвестного типа
+// (например, устаревшая запись) добавляется отдельная опция.
+function setPrinterType(value, fallback) {
+    const select = document.getElementById('printerType');
+    value = value || fallback || '';
+    if (![...select.options].some(o => o.value === value)) {
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = value + ' (тип не зарегистрирован)';
+        select.appendChild(opt);
+    }
+    select.value = value;
+}
+
 // Открыть форму добавления
 function openAddPrinterForm() {
     document.getElementById('formTitle').textContent = '➕ Добавить принтер';
@@ -422,7 +441,7 @@ function openAddPrinterForm() {
     document.getElementById('printerName').value = '';
     document.getElementById('ipAddress').value = '';
     document.getElementById('portAddress').value = '9100';
-    document.getElementById('printerType').value = 'zebra';
+    setPrinterType('', '{{ printer_types[0].key if printer_types else "zebra" }}');
     document.getElementById('bufferLimit').value = '25';
     document.getElementById('batchSize').value = '5';
     document.getElementById('lineId').value = '';
@@ -438,7 +457,7 @@ function editPrinter(id, name, ip, port, printerType, lineId, bufferLimit, batch
     document.getElementById('printerName').value = name.trim();
     document.getElementById('ipAddress').value = ip.trim();
     document.getElementById('portAddress').value = port;
-    document.getElementById('printerType').value = printerType || 'zebra';
+    setPrinterType(printerType, '{{ printer_types[0].key if printer_types else "zebra" }}');
     document.getElementById('bufferLimit').value = bufferLimit || 25;
     document.getElementById('batchSize').value = batchSize || 5;
     document.getElementById('lineId').value = lineId;

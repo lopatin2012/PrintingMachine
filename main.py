@@ -1,7 +1,10 @@
 # main.py
 
+import asyncio
 import logging
 import os
+import subprocess
+import sys
 from datetime import datetime
 from contextlib import asynccontextmanager
 
@@ -9,7 +12,6 @@ from fastapi import FastAPI, Request, status, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
 
-# Миграции.
 from starlette.responses import JSONResponse
 
 import models
@@ -22,7 +24,7 @@ from templates_config import templates
 
 # Роутеры.
 from routers import (
-    auth, workshop, line, printer, product, template, preview_barcode,
+    auth, workshop, line, printer, product, template,
     workshop_user, user, role, print_job
 )
 # База данных.
@@ -56,12 +58,48 @@ favicon_path = 'favicon.ico'
 # Очередь печати.
 printer_queue = None
 
-# Автоматические миграции.
+
+def _run_migrations_sync() -> None:
+    """Применить миграции БД (alembic) через migrate.py.
+
+    migrate.py — «умная» накатка: создаёт схему на пустой БД и помечает
+    alembic на head, «стампит» БД, восстановленную из дампа (без таблицы
+    alembic_version), и применяет недостающие миграции в обычном случае.
+    Выполняется в отдельном процессе (venv-питоном), чтобы не тащить в
+    сервис синхронные psycopg2/alembic и не менять cwd основного процесса.
+    """
+    result = subprocess.run(
+        [sys.executable, str(BASE_DIR / 'migrate.py')],
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    if result.stdout:
+        logger.info('Миграции: %s', result.stdout.strip())
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or '').strip()
+        raise RuntimeError(
+            f'Миграции завершились с ошибкой (код {result.returncode}): '
+            f'{detail[-500:]}'
+        )
+
+
+async def _run_migrations() -> None:
+    """Применить миграции БД без блокировки event loop (в отдельном потоке)."""
+    logger.info('Применение миграций базы данных...')
+    await asyncio.to_thread(_run_migrations_sync)
+    logger.info('Миграции применены (alembic head)')
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global printer_queue
 
     logger.info('Запуск сервиса печати...')
+
+    # Миграции БД выполняются ДО init_db: после alembic схема актуальна,
+    # а init_db лишь создаёт базовые роли и администратора.
+    await _run_migrations()
 
     printer_workers = _get_printer_workers()
     printer_queue = PrinterQueue(
@@ -72,15 +110,6 @@ async def lifespan(app: FastAPI):
     logger.info('Очередь печати запущена: %d воркер(а/ов)', printer_workers)
 
     app.state.printer_queue = printer_queue
-
-    # try:
-    #     logger.info('Применение миграций...')
-    #     alembic_cfg = Config(str(BASE_DIR / "alembic.ini"))
-    #     command.upgrade(alembic_cfg, "head")
-    #     logger.info('Миграции успешно применены!')
-    # except Exception as e:
-    #     logger.error(f"Ошибка во время применения миграций: {e}")
-    #     raise
 
     try:
         # Инициализация базовых данных.
@@ -154,7 +183,6 @@ app.include_router(line.router)
 app.include_router(printer.router)
 app.include_router(product.router)
 app.include_router(template.router)
-app.include_router(preview_barcode.router)
 app.include_router(auth.router)
 app.include_router(user.router)
 app.include_router(workshop_user.router)

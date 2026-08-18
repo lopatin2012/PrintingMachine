@@ -20,6 +20,7 @@ from crud.code_template import CodeTemplateCRUD
 from schemas import PrintJobCreate
 from models import User, Workshop, Line, PrintJob, WorkshopUser, Product, Printer, CodeTemplate
 from services.print_queue import PrintTask
+from helpers.printer_drivers import printer_type_label
 
 from templates_config import templates
 from security import get_current_user
@@ -511,10 +512,9 @@ async def get_available_printers(
     workshops = workshops_result.scalars().all()
     has_all_workshops = any(w.name == 'Все цеха' for w in workshops)
 
-    from sqlalchemy.orm import selectinload as sload
     printer_query = (
         select(Printer)
-        .options(sload(Printer.line))
+        .options(selectinload(Printer.line))
         .join(Line, Printer.line_id == Line.id)
     )
 
@@ -534,6 +534,7 @@ async def get_available_printers(
                 "ip_address": p.ip_address,
                 "port_address": p.port_address,
                 "printer_type": p.printer_type,
+                "printer_type_label": printer_type_label(p.printer_type),
                 "line_name": p.line.name if p.line else "—",
             }
             for p in printers

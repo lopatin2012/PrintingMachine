@@ -1,4 +1,4 @@
-# helpers/printer_status.py
+# helpers/printers.py
 
 import asyncio
 import socket
@@ -414,29 +414,12 @@ def check_printer_status_on_socket(sock, printer_type: str = 'zebra',
     Используется во время печати: некоторые TSC-принтеры (PEX) сбрасывают
     параллельные TCP-подключения, но отвечают на статус-команды в том же
     соединении, через которое идёт печать.
+
+    Команды и формат ответа зависят от типа принтера — делегируется
+    драйверу (helpers/printer_drivers.py).
     """
-    try:
-        sock.settimeout(min(timeout, 2.0))
-        if (printer_type or '').lower() == 'tsc':
-            sock.sendall(b'\x1b!S')
-            data = sock.recv(32)
-            return _parse_tsc_status(data)
-        # Zebra: ~HS
-        sock.sendall(b'~HS\r\n')
-        response = b''
-        while True:
-            try:
-                chunk = sock.recv(512)
-                if not chunk:
-                    break
-                response += chunk
-                if response.count(b'\x03\r\n') >= 2:
-                    break
-            except socket.timeout:
-                break
-        return _parse_zebra_hs(response)
-    except (socket.timeout, ConnectionResetError, ConnectionError, OSError) as e:
-        return {'ok': False, 'error': str(e)}
+    from helpers.printer_drivers import get_driver_or_default
+    return get_driver_or_default(printer_type).status_on_socket(sock, timeout)
 
 
 def check_tsc_mileage_on_socket(sock, timeout: float = 1.5):
@@ -576,10 +559,15 @@ def check_printer_status_tsc(ip: str, port: int = 9100, timeout: float = 3.0) ->
 def check_printer_status_by_type(ip: str, port: int = 9100,
                                  printer_type: str = 'zebra',
                                  timeout: float = 3.0) -> dict:
-    """Проверка статуса принтера по его типу (zebra — ZPL, tsc — TSPL)."""
-    if (printer_type or '').lower() == 'tsc':
-        return check_printer_status_tsc(ip, port, timeout)
-    return check_printer_status(ip, port, timeout)
+    """Проверка статуса принтера по его типу.
+
+    Запрос и формат ответа зависят от типа принтера (Zebra — ~HS,
+    TSC — <ESC>!S/<ESC>!?): диспетчеризация выполняется через реестр
+    драйверов (helpers/printer_drivers.py), что позволяет добавлять
+    новые типы без правки этого модуля.
+    """
+    from helpers.printer_drivers import get_driver_or_default
+    return get_driver_or_default(printer_type).status(ip, port, timeout)
 
 
 def send_printer_command(ip: str, port: int, command: bytes,
@@ -597,30 +585,17 @@ def send_printer_command(ip: str, port: int, command: bytes,
 def clear_printer_queue(ip: str, port: int = 9100, printer_type: str = 'zebra') -> dict:
     """Очистка очереди печати принтера.
 
-    Zebra — ~JA (отмена всех заданий в очереди принтера);
-    TSC   — <ESC>!. (immediate-команда отмены всех заданий печати,
-            работает даже когда принтер занят; CLS лишь чистит
-            буфер изображения текущего задания и не отменяет очередь).
-
-    После команды очистки принтеру нужно время на обработку (~JA — Zebra
-    сбрасывает очередь и временно не отвечает на ~HS). Пауза 0.5с перед
-    возвратом гарантирует, что следующий запрос статуса не получит пустой
-    ответ.
+    Команда зависит от типа принтера (Zebra — ~JA, TSC — <ESC>!.) и
+    определяется драйвером (helpers/printer_drivers.py).
     """
-    if (printer_type or '').lower() == 'tsc':
-        result = send_printer_command(ip, port, b'\x1b!.')
-    else:
-        result = send_printer_command(ip, port, b'~JA')
-    if result.get('success'):
-        time.sleep(0.5)
-    return result
+    from helpers.printer_drivers import get_driver_or_default
+    return get_driver_or_default(printer_type).clear_queue(ip, port)
 
 
 def restart_printer(ip: str, port: int = 9100, printer_type: str = 'zebra') -> dict:
-    """Перезапуск принтера. Zebra — ~JR, TSC — <ESC>!C."""
-    if (printer_type or '').lower() == 'tsc':
-        return send_printer_command(ip, port, b'\x1b!C')
-    return send_printer_command(ip, port, b'~JR')
+    """Перезапуск принтера (Zebra — ~JR, TSC — <ESC>!C)."""
+    from helpers.printer_drivers import get_driver_or_default
+    return get_driver_or_default(printer_type).restart(ip, port)
 
 
 # ---------------------------------------------------------------------------

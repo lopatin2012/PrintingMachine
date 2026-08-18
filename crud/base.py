@@ -1,14 +1,13 @@
 # crud/base.py
 
-from typing import Type, TypeVar, Generic, Optional, List, Any, Coroutine, Sequence
+from typing import Type, TypeVar, Generic, Optional, Any, Sequence
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, Row, RowMapping, func
+from sqlalchemy import select, Row, RowMapping, func
 from sqlalchemy.exc import SQLAlchemyError
 
 from pydantic import BaseModel
-from sqlalchemy.testing.config import db_opts
 
 ModelType = TypeVar('ModelType')
 CreateSchemaType = TypeVar('CreateSchemaType', bound=BaseModel)

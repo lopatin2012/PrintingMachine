@@ -52,6 +52,29 @@
     </div>
 
     {% if jobs %}
+    <!-- Пагинация — над таблицей, чтобы переключение страниц было под рукой -->
+    {% if total_pages > 1 %}
+    <div class="pagination">
+        {% if page > 1 %}
+        <a href="/printing/history?page={{ page - 1 }}{% if selected_user_id %}&user_id={{ selected_user_id }}{% endif %}">←</a>
+        {% endif %}
+
+        {% for p in range(1, total_pages + 1) %}
+            {% if p == 1 or p == total_pages or (p >= page - 2 and p <= page + 2) %}
+                <a href="/printing/history?page={{ p }}{% if selected_user_id %}&user_id={{ selected_user_id }}{% endif %}" class="{% if p == page %}active{% endif %}">{{ p }}</a>
+            {% elif p == 2 and page > 4 %}
+                <span class="pagination-ellipsis">...</span>
+            {% elif p == total_pages - 1 and page < total_pages - 3 %}
+                <span class="pagination-ellipsis">...</span>
+            {% endif %}
+        {% endfor %}
+
+        {% if page < total_pages %}
+        <a href="/printing/history?page={{ page + 1 }}{% if selected_user_id %}&user_id={{ selected_user_id }}{% endif %}">→</a>
+        {% endif %}
+    </div>
+    {% endif %}
+
     <div class="table-container">
         <table class="history-table">
             <thead>
@@ -94,29 +117,6 @@
             </tbody>
         </table>
     </div>
-
-    <!-- Пагинация -->
-    {% if total_pages > 1 %}
-    <div class="pagination">
-        {% if page > 1 %}
-        <a href="/printing/history?page={{ page - 1 }}{% if selected_user_id %}&user_id={{ selected_user_id }}{% endif %}">←</a>
-        {% endif %}
-
-        {% for p in range(1, total_pages + 1) %}
-            {% if p == 1 or p == total_pages or (p >= page - 2 and p <= page + 2) %}
-                <a href="/printing/history?page={{ p }}{% if selected_user_id %}&user_id={{ selected_user_id }}{% endif %}" class="{% if p == page %}active{% endif %}">{{ p }}</a>
-            {% elif p == 2 and page > 4 %}
-                <span class="pagination-ellipsis">...</span>
-            {% elif p == total_pages - 1 and page < total_pages - 3 %}
-                <span class="pagination-ellipsis">...</span>
-            {% endif %}
-        {% endfor %}
-
-        {% if page < total_pages %}
-        <a href="/printing/history?page={{ page + 1 }}{% if selected_user_id %}&user_id={{ selected_user_id }}{% endif %}">→</a>
-        {% endif %}
-    </div>
-    {% endif %}
 
     {% else %}
     <div class="no-jobs">

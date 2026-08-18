@@ -6,6 +6,8 @@
 .printer-type-badge { display:inline-block; padding:4px 10px; border-radius:20px; font-size:13px; font-weight:600; }
 .printer-type-badge.type-zebra { background:#e8eaf6; color:#3d478a; }
 .printer-type-badge.type-tsc { background:#e0f2f1; color:#00695c; }
+/* Любые другие зарегистрированные типы (ZPL-совместимые и т.д.) */
+.printer-type-badge:not(.type-zebra):not(.type-tsc) { background:#fff3e0; color:#e65100; }
 
 /* Бейджи для принтеров */
 .ip-badge {

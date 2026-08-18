@@ -62,7 +62,7 @@ class Printer(Base):
     name = Column(String(50), index=True, unique=True, nullable=False, comment='Наименование')
     ip_address = Column(String(45), index=True, unique=True, nullable=False, comment='IP-адрес')
     port_address = Column(Integer, default=9100, index=True, nullable=False, comment='Порт')
-    printer_type = Column(String(20), default='zebra', nullable=False, server_default='zebra', comment='Тип принтера (zebra/tsc)')
+    printer_type = Column(String(20), default='zebra', nullable=False, server_default='zebra', comment='Тип принтера (см. helpers/printer_drivers.py)')
     # Контроль очереди принтера: держим не больше buffer_limit этикеток «в полёте»
     # Для TSC-аппликаторов особенно важно — при большом буфере принтер перестаёт отвечать на статус.
     buffer_limit = Column(Integer, default=25, nullable=False, server_default='25', comment='Макс. этикеток в очереди принтера')

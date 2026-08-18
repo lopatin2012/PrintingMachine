@@ -70,6 +70,63 @@
     </div>
     {% endif %}
 
+    {# Пагинатор — над таблицей, чтобы переключение страниц было под рукой #}
+    {% if total_pages > 1 %}
+    <div class="pagination-wrapper">
+        <div class="pagination-info">
+            Показано {{ (page - 1) * per_page + 1 }}–{{ [page * per_page, total_items]|min }} из {{ total_items }}
+        </div>
+
+        <nav class="pagination" aria-label="Навигация по страницам">
+            {# Кнопка "Назад" #}
+            {% if has_prev %}
+            <a href="{{ build_pagination_url(page - 1, pagination_params) }}"
+               class="pagination-link pagination-arrow"
+               aria-label="Предыдущая страница">
+                ←
+            </a>
+            {% else %}
+            <span class="pagination-link pagination-arrow disabled">←</span>
+            {% endif %}
+
+            {# Номера страниц #}
+            {% for p in page_range %}
+                {% if p == '...' %}
+                <span class="pagination-ellipsis">…</span>
+                {% elif p == page %}
+                <span class="pagination-link pagination-link-active">{{ p }}</span>
+                {% else %}
+                <a href="{{ build_pagination_url(p, pagination_params) }}"
+                   class="pagination-link">{{ p }}</a>
+                {% endif %}
+            {% endfor %}
+
+            {# Кнопка "Вперёд" #}
+            {% if has_next %}
+            <a href="{{ build_pagination_url(page + 1, pagination_params) }}"
+               class="pagination-link pagination-arrow"
+               aria-label="Следующая страница">
+                →
+            </a>
+            {% else %}
+            <span class="pagination-link pagination-arrow disabled">→</span>
+            {% endif %}
+        </nav>
+
+        {# Выбор количества записей на странице #}
+        <div class="pagination-per-page">
+            <label for="perPageSelect" class="per-page-label">На странице:</label>
+            <select id="perPageSelect" class="per-page-select" onchange="changePerPage(this.value)">
+                {% for option in [10, 20, 50, 100] %}
+                <option value="{{ option }}" {% if per_page == option %}selected{% endif %}>
+                    {{ option }}
+                </option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- Таблица продуктов -->
     <div class="table-container">
         <table class="data-table">
@@ -156,63 +213,6 @@
             </tbody>
         </table>
     </div>
-
-    {# Пагинатор #}
-    {% if total_pages > 1 %}
-    <div class="pagination-wrapper">
-        <div class="pagination-info">
-            Показано {{ (page - 1) * per_page + 1 }}–{{ [page * per_page, total_items]|min }} из {{ total_items }}
-        </div>
-
-        <nav class="pagination" aria-label="Навигация по страницам">
-            {# Кнопка "Назад" #}
-            {% if has_prev %}
-            <a href="{{ build_pagination_url(page - 1, pagination_params) }}"
-               class="pagination-link pagination-arrow"
-               aria-label="Предыдущая страница">
-                ←
-            </a>
-            {% else %}
-            <span class="pagination-link pagination-arrow disabled">←</span>
-            {% endif %}
-
-            {# Номера страниц #}
-            {% for p in page_range %}
-                {% if p == '...' %}
-                <span class="pagination-ellipsis">…</span>
-                {% elif p == page %}
-                <span class="pagination-link pagination-link-active">{{ p }}</span>
-                {% else %}
-                <a href="{{ build_pagination_url(p, pagination_params) }}"
-                   class="pagination-link">{{ p }}</a>
-                {% endif %}
-            {% endfor %}
-
-            {# Кнопка "Вперёд" #}
-            {% if has_next %}
-            <a href="{{ build_pagination_url(page + 1, pagination_params) }}"
-               class="pagination-link pagination-arrow"
-               aria-label="Следующая страница">
-                →
-            </a>
-            {% else %}
-            <span class="pagination-link pagination-arrow disabled">→</span>
-            {% endif %}
-        </nav>
-
-        {# Выбор количества записей на странице #}
-        <div class="pagination-per-page">
-            <label for="perPageSelect" class="per-page-label">На странице:</label>
-            <select id="perPageSelect" class="per-page-select" onchange="changePerPage(this.value)">
-                {% for option in [10, 20, 50, 100] %}
-                <option value="{{ option }}" {% if per_page == option %}selected{% endif %}>
-                    {{ option }}
-                </option>
-                {% endfor %}
-            </select>
-        </div>
-    </div>
-    {% endif %}
 
     <!-- Форма добавления/редактирования -->
     <div id="productFormModal" class="modal hidden">

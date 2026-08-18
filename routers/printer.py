@@ -18,8 +18,9 @@ from sqlalchemy import select
 from crud.line import LineCRUD
 from database import get_db
 from crud.printer import PrinterCRUD
-from schemas import PrinterCreate, PrinterUpdate, PrinterResponse
+from schemas import PrinterCreate, PrinterUpdate
 from models import User, Line, Printer, Workshop, PrintJob
+from helpers.printer_drivers import get_printer_driver, printer_types
 from helpers.printers import (
     check_printer_status_async,
     clear_printer_queue_async,
@@ -80,7 +81,8 @@ async def printer_page(
             'lines': lines,
             'user': current_user,
             'success': success,
-            'error': error
+            'error': error,
+            'printer_types': printer_types(),
         }
     )
 
@@ -112,9 +114,10 @@ async def printer_create(
             status_code=status.HTTP_303_SEE_OTHER
         )
 
-    if printer_type not in ('zebra', 'tsc'):
+    if get_printer_driver(printer_type) is None:
+        supported = ', '.join(t['key'] for t in printer_types())
         return RedirectResponse(
-            url='/printers?error=Тип принтера должен быть Zebra или TSC',
+            url=f'/printers?error=Тип принтера должен быть одним из: {supported}',
             status_code=status.HTTP_303_SEE_OTHER
         )
 
@@ -222,9 +225,10 @@ async def printer_update(
         )
 
     printer_type = printer_type.strip().lower()
-    if printer_type not in ('zebra', 'tsc'):
+    if get_printer_driver(printer_type) is None:
+        supported = ', '.join(t['key'] for t in printer_types())
         return RedirectResponse(
-            url='/printers?error=Тип принтера должен быть Zebra или TSC',
+            url=f'/printers?error=Тип принтера должен быть одним из: {supported}',
             status_code=status.HTTP_303_SEE_OTHER
         )
 

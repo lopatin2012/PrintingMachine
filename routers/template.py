@@ -139,24 +139,6 @@ async def template_create(
             error_code=status.HTTP_404_NOT_FOUND
         )
 
-    # Проверка уникальности комбинации продукт+принтер
-    # result = await db.execute(
-    #     select(CodeTemplate).where(
-    #         CodeTemplate.product_id == product_id,
-    #         CodeTemplate.printer_id == printer_id,
-    #         CodeTemplate.is_active == True
-    #     )
-    # )
-    # existing = result.scalar_one_or_none()
-    # if existing:
-    #     return ajax_or_redirect(
-    #         endpoint,
-    #         is_ajax,
-    #         False,
-    #          f'Активный шаблон для продукта "{product.name}" и принтера "{printer.name}" уже существует',
-    #         error_code=status.HTTP_404_NOT_FOUND
-    #     )
-
     # Создание шаблона
     template_data = CodeTemplateCreate(
         name=name,
@@ -335,15 +317,7 @@ async def template_activate(
             status_code=status.HTTP_303_SEE_OTHER
         )
 
-    # Деактивируем другие шаблоны для этой же пары продукт+принтер
-    await db.execute(
-        select(CodeTemplate).where(
-            CodeTemplate.product_id == template.product_id,
-            CodeTemplate.printer_id == template.printer_id,
-            CodeTemplate.id != template_id,
-            CodeTemplate.is_active == True
-        )
-    )
+    # Деактивируем другие шаблоны для этой же пары продукт+принтер.
     other_templates = (await db.execute(
         select(CodeTemplate).where(
             CodeTemplate.product_id == template.product_id,

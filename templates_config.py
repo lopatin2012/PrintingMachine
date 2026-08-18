@@ -5,6 +5,7 @@ from urllib.parse import urlencode
 
 from fastapi.templating import Jinja2Templates
 from helper import BASE_DIR
+from helpers.printer_drivers import printer_type_label as _driver_type_label
 
 templates = Jinja2Templates(directory=BASE_DIR / 'templates')
 
@@ -13,8 +14,11 @@ def format_datetime(value: datetime, format: str = '%d.%m.%Y %H:%M'):
     return value.strftime(format) if value else ''
 
 def printer_type_label(value) -> str:
-    """Название типа принтера для отображения: zebra → Zebra, tsc → TSC."""
-    return {'zebra': 'Zebra', 'tsc': 'TSC'}.get((value or '').strip().lower(), value or '—')
+    """Название типа принтера для отображения — из реестра драйверов.
+
+    Неизвестный/пустой тип отображается как есть (или '—').
+    """
+    return _driver_type_label(value)
 
 def build_pagination_url(page: int, params: dict = None, endpoint: str = 'products') -> str:
     """Генерация ссылок пагинации"""
