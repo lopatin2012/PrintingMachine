@@ -277,6 +277,7 @@ class CodeTemplateBase(BaseModel):
 class CodeTemplateCreate(CodeTemplateBase):
     """Создание шаблона"""
     uip_include_batch: bool = Field(False, description='Включать партию в УИП')
+    is_print_gtin_unit: bool = Field(False, description='Печатать DataMatrix-коды из внешнего сервиса')
 
 class CodeTemplateUpdate(BaseModel):
     product_id: Optional[UUID] = Field(None, description='UUID продукта')
@@ -285,6 +286,7 @@ class CodeTemplateUpdate(BaseModel):
     print_code: Optional[str] = Field(None, description='Код шаблона')
     is_active: Optional[bool] = Field(None, description='Активен')
     uip_include_batch: Optional[bool] = Field(None, description='Включать партию в УИП')
+    is_print_gtin_unit: Optional[bool] = Field(None, description='Печатать DataMatrix-коды из внешнего сервиса')
 
 class CodeTemplateInDBBase(CodeTemplateBase):
     """Код шаблона из БД"""

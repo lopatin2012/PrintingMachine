@@ -114,6 +114,9 @@ def detect_schema_revision(cur) -> str:
     if 'printers' not in tables:
         return 'bfd9a6d5bfd3'
 
+    # head: печать DataMatrix-кодов из внешнего сервиса (is_print_gtin_unit).
+    if has_column(cur, 'code_templates', 'is_print_gtin_unit'):
+        return 'a7b8c9d0e1f2'
     # head: партия в УИП выключена по умолчанию (server_default = false).
     if has_column(cur, 'code_templates', 'uip_include_batch') \
             and column_default(cur, 'code_templates', 'uip_include_batch') == 'false':

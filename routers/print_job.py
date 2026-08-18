@@ -3,6 +3,7 @@
 import logging
 from datetime import date, timedelta
 from typing import Optional
+from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Depends, HTTPException, status, Form, Query
@@ -20,6 +21,7 @@ from crud.code_template import CodeTemplateCRUD
 from schemas import PrintJobCreate
 from models import User, Workshop, Line, PrintJob, WorkshopUser, Product, Printer, CodeTemplate
 from services.print_queue import PrintTask
+from services.datamatrix_service import DatamatrixServiceError, fetch_datamatrix_codes
 from helpers.printer_drivers import printer_type_label
 
 from templates_config import templates
@@ -176,6 +178,43 @@ async def start_printing(
     expiration_date = marking_date + timedelta(days=product.date_expiration)
     boxes_count = last_box - first_box + 1
 
+    # ── DataMatrix из внешнего сервиса ────────────────────────────────────────
+    # Если в шаблоне включён флаг is_print_gtin_unit — запрашиваем список кодов
+    # DataMatrix для партии. Кодов нет или их меньше, чем коробок — печать
+    # отменяется с сообщением об ошибке.
+    datamatrix_codes: list = []
+    if template.is_print_gtin_unit:
+        try:
+            datamatrix_codes = await fetch_datamatrix_codes(
+                product_article=product.article,
+                gtin_unit=product.gtin_unit or '',
+                batch_number=batch_number.strip(),
+                marking_date=marking_date,
+                first_box=first_box,
+                last_box=last_box,
+                boxes_count=boxes_count,
+            )
+        except DatamatrixServiceError as e:
+            logger.warning('Печать отменена (%s): %s', current_user.login, e)
+            return RedirectResponse(
+                url=f'/printing?error={quote(str(e))}',
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+        if len(datamatrix_codes) < boxes_count:
+            msg = (
+                f'Сервис DataMatrix вернул {len(datamatrix_codes)} кодов, '
+                f'требуется {boxes_count} — печать отменена'
+            )
+            logger.warning('Печать отменена (%s): %s', current_user.login, msg)
+            return RedirectResponse(
+                url=f'/printing?error={quote(msg)}',
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+        logger.info(
+            'Шаблон %s требует DataMatrix: получено %d кодов (партия %s)',
+            template.name, len(datamatrix_codes), batch_number,
+        )
+
     print_job_data = PrintJobCreate(
         user_id=current_user.id,
         product_id=product_id,
@@ -210,6 +249,7 @@ async def start_printing(
         gtin_unit=gtin_unit.strip(),
         article=article.strip(),
         uip_include_batch=bool(template.uip_include_batch),
+        datamatrix_codes=datamatrix_codes,
     )
 
     printer_queue = request.app.state.printer_queue
@@ -484,6 +524,7 @@ async def get_active_template_for_product(
             ),
             "print_code": template.print_code,
             "uip_include_batch": bool(template.uip_include_batch),
+            "is_print_gtin_unit": bool(template.is_print_gtin_unit),
         }
     }
 
@@ -607,6 +648,7 @@ async def get_templates_for_product(
                 "printer_name": t.printer.name if t.printer else "Неизвестный принтер",
                 "print_code": t.print_code,
                 "uip_include_batch": bool(t.uip_include_batch),
+                "is_print_gtin_unit": bool(t.is_print_gtin_unit),
             }
             for t in templates
         ]

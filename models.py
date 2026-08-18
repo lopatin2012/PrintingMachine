@@ -160,6 +160,7 @@ class CodeTemplate(Base):
     name = Column(String(200), nullable=False, comment='Наименование')
     is_active = Column(Boolean, default=True, comment='Активен')
     uip_include_batch = Column(Boolean, default=False, nullable=False, server_default='false', comment='Включать партию в УИП')
+    is_print_gtin_unit = Column(Boolean, default=False, nullable=False, server_default='false', comment='Печатать DataMatrix-коды из внешнего сервиса (плейсхолдер {datamatrix})')
     created_at = Column(MoscowDateTime(), server_default=func.now(), comment='Дата добавления')
     edited_at = Column(MoscowDateTime(), server_default=func.now(), onupdate=func.now(), comment='Дата редактирования')
 

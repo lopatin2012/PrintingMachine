@@ -28,6 +28,7 @@
 **Печать**
 
 * задание на печать: партия, дата маркировки, диапазон номеров коробок; срок годности вычисляется автоматически;
+* печать DataMatrix-кодов из внешнего сервиса: флаг шаблона «Печатать DataMatrix-коды из внешнего сервиса» — перед печатью запрашивается список кодов (POST на `DATAMATRIX_SERVICE_URL`), коды подставляются в плейсхолдер `{datamatrix}`; если кодов нет или их меньше, чем коробок, — печать отменяется с сообщением об ошибке;
 * асинхронная очередь печати: повторные попытки с экспоненциальной задержкой, ожидание снятия паузы принтера, остановка задания, докачка с места остановки;
 * журнал и история заданий, счётчик напечатанных этикеток;
 * статусы задания: `pending → processing → completed | failed | cancelled`.
@@ -159,6 +160,7 @@ User ── PrintJob
 | `{marking_date_str}` / `{expiration_date_str}` | Даты в формате `ДД.ММ.ГГ` |
 | `{batch_number_str}` | `партия(ДДММГГ)` |
 | `{batch_number}` | Номер партии как есть |
+| `{datamatrix}` | Код DataMatrix из внешнего сервиса (для шаблонов с флагом «Печатать DataMatrix-коды из внешнего сервиса») |
 
 Плейсхолдеры **УИП** (DataMatrix, формат GS1, Честный Знак):
 
@@ -192,6 +194,36 @@ User ── PrintJob
 
 * `POST /templates/preview/render` — онлайн-рендер через Labelary API (даты в формате `YYMMDD`);
 * `POST /templates/preview/render_local` — полностью офлайн: бинарник **zebrash** (или **zebrafy** для графики `^GF`).
+
+---
+
+## DataMatrix из внешнего сервиса
+
+Если у шаблона включён флаг **«Печатать DataMatrix-коды из внешнего сервиса»**
+(`is_print_gtin_unit`), то при запуске печати запрашивается список кодов
+DataMatrix у внешнего сервиса (`services/datamatrix_service.py`). Коды
+подставляются в ZPL-шаблон в плейсхолдер `{datamatrix}` — по одному коду на
+коробку. Если кодов нет или их меньше, чем коробок в задании, печать
+**отменяется** и пользователю показывается сообщение об ошибке.
+
+**Запрос** — `POST` на `DATAMATRIX_SERVICE_URL` (JSON, при необходимости —
+`Authorization: Bearer <DATAMATRIX_SERVICE_TOKEN>`):
+
+```json
+{
+  "product_article": "000000123456",
+  "gtin_unit": "04601234567890",
+  "batch_number": "1564",
+  "marking_date": "2026-08-18",
+  "first_box": 1,
+  "last_box": 50,
+  "count": 50
+}
+```
+
+**Ответ** — JSON-объект `{"codes": ["...", ...]}` (либо просто JSON-список
+строк). Протокол можно адаптировать под конкретный сервис в
+`services/datamatrix_service.py` (функция `fetch_datamatrix_codes`).
 
 ---
 
@@ -297,6 +329,11 @@ SECRET_KEY=change-me
 
 # Очередь печати: число воркеров (по умолчанию 1 — строго последовательная печать)
 # PRINTER_WORKERS=2
+
+# Внешний сервис кодов DataMatrix (для шаблонов с флагом «Печатать DataMatrix-коды из внешнего сервиса»)
+# DATAMATRIX_SERVICE_URL=https://dm-service.example.com/api/codes
+# DATAMATRIX_SERVICE_TOKEN=secret-token
+# DATAMATRIX_SERVICE_TIMEOUT=10
 
 # Предпросмотр
 # ZEBRASH_BINARY=/path/to/zebrash-render

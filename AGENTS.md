@@ -62,3 +62,4 @@ Single-package FastAPI app — no monorepo, no separate packages.
 - **Expiration date:** Computed automatically as `marking_date + product.date_expiration` — don't set manually
 - **Template `^XZ`:** Appended automatically if missing from ZPL template
 - **UIP (DataMatrix):** Always 32 chars: GTIN(14) + date(6) + article + serial(12); `uip_include_batch` flag on template controls batch vs zeros
+- **External DataMatrix codes:** template flag `is_print_gtin_unit` — before printing, codes are fetched from `DATAMATRIX_SERVICE_URL` (see `services/datamatrix_service.py`), substituted into `{datamatrix}` placeholder; print is cancelled with an error if codes are missing/insufficient

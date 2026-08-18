@@ -117,6 +117,7 @@
                     data-product-gtin-unit="{{ template.product.gtin_unit if template.product and template.product.gtin_unit else '' }}"
                     data-product-article="{{ template.product.article if template.product and template.product.article else '' }}"
                     data-uip-include-batch="{{ 'true' if template.uip_include_batch else 'false' }}"
+                    data-is-print-gtin-unit="{{ 'true' if template.is_print_gtin_unit else 'false' }}"
                     data-printer-id="{{ template.printer_id }}"
                     data-status="{{ 'active' if template.is_active else 'inactive' }}"
                     data-print-code="{{ template.print_code|e }}">
@@ -316,6 +317,14 @@
                                     <span>Включать партию в УИП (DataMatrix)</span>
                                 </label>
                                 <small class="form-hint">Если выключено — вместо партии в УИП идут нули, а УИП добивается до 32 знаков (GTIN единицы + дата + артикул сохраняются)</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label class="checkbox-label" for="templateIsPrintGtinUnit">
+                                    <input type="checkbox" id="templateIsPrintGtinUnit" name="is_print_gtin_unit" value="true">
+                                    <span>Печатать DataMatrix-коды из внешнего сервиса</span>
+                                </label>
+                                <small class="form-hint">При печати запрашивается список кодов DataMatrix у внешнего сервиса (плейсхолдер {datamatrix} в шаблоне); если коды не получены — печать отменяется с ошибкой</small>
                             </div>
                         </div>
 
@@ -556,6 +565,8 @@ function openAddTemplateForm() {
     document.getElementById('templateCode').value = '';
     const uipChk = document.getElementById('templateUipIncludeBatch');
     if (uipChk) uipChk.checked = false;  // по умолчанию партия в УИП выключена
+    const dmChk = document.getElementById('templateIsPrintGtinUnit');
+    if (dmChk) dmChk.checked = false;  // по умолчанию DataMatrix из внешнего сервиса выключен
     document.getElementById('templateFormModal').classList.remove('hidden');
 
     // Прокрутка к началу формы (сброс скролла полей)
@@ -579,7 +590,7 @@ function openAddTemplateForm() {
     setTimeout(() => document.getElementById('templateName').focus(), 300);
 }
 
-function editTemplate(id, name, productId, productGtin, productGtinUnit, productArticle, uipIncludeBatch, printerId, code) {
+function editTemplate(id, name, productId, productGtin, productGtinUnit, productArticle, uipIncludeBatch, printerId, code, isPrintGtinUnit) {
     document.getElementById('formTitle').textContent = '✏️ Редактировать шаблон';
     document.getElementById('formSubmitText').textContent = 'Сохранить изменения';
     document.getElementById('templateForm').action = `/templates/${id}`;
@@ -594,6 +605,10 @@ function editTemplate(id, name, productId, productGtin, productGtinUnit, product
     // Флаг «партия в УИП» из шаблона.
     const uipChk = document.getElementById('templateUipIncludeBatch');
     if (uipChk) uipChk.checked = uipIncludeBatch !== false && uipIncludeBatch !== 'false';
+
+    // Флаг «DataMatrix из внешнего сервиса» из шаблона.
+    const dmChk = document.getElementById('templateIsPrintGtinUnit');
+    if (dmChk) dmChk.checked = isPrintGtinUnit === true || isPrintGtinUnit === 'true';
 
     console.log(productGtin);
 
@@ -1118,6 +1133,7 @@ function setupFormValidation() {
                     printer_name: printerSelect.options[printerSelect.selectedIndex]?.text.split(' (')[0] || '',
                     print_code: code,
                     uip_include_batch: document.getElementById('templateUipIncludeBatch')?.checked ?? false,
+                    is_print_gtin_unit: document.getElementById('templateIsPrintGtinUnit')?.checked ?? false,
                     product_gtin_unit: document.getElementById('productGtinUnit')?.value || '',
                     product_article: document.getElementById('productArticle')?.value || '',
                 });
@@ -1192,6 +1208,7 @@ function updateTableRow(templateId, data) {
     if (data.product_gtin_unit !== undefined) row.dataset.productGtinUnit = data.product_gtin_unit;
     if (data.product_article !== undefined) row.dataset.productArticle = data.product_article;
     if (data.uip_include_batch !== undefined) row.dataset.uipIncludeBatch = data.uip_include_batch ? 'true' : 'false';
+    if (data.is_print_gtin_unit !== undefined) row.dataset.isPrintGtinUnit = data.is_print_gtin_unit ? 'true' : 'false';
     if (data.printer_id) row.dataset.printerId = data.printer_id;
     if (data.is_active !== undefined) row.dataset.status = data.is_active ? 'active' : 'inactive';
     if (data.print_code) row.dataset.printCode = data.print_code;
@@ -1259,6 +1276,7 @@ function createTableRow(template) {
     data-product-gtin-unit="${template.product_gtin_unit || ''}"
     data-product-article="${template.product_article || ''}"
     data-uip-include-batch="${template.uip_include_batch ? 'true' : 'false'}"
+    data-is-print-gtin-unit="${template.is_print_gtin_unit ? 'true' : 'false'}"
     data-printer-id="${template.printer_id || ''}"
     data-status="${statusClass}"
     data-print-code="${safePrintCode}">
@@ -1333,10 +1351,11 @@ function editTemplateFromRow(button, id, name) {
     const productGtinUnit = row.dataset.productGtinUnit || '';
     const productArticle = row.dataset.productArticle || '';
     const uipIncludeBatch = row.dataset.uipIncludeBatch;
+    const isPrintGtinUnit = row.dataset.isPrintGtinUnit;
     const printerId = row.dataset.printerId || '';
     const isActive = row.dataset.status === 'active';
 
-    editTemplate(id, name, productId, productGtin, productGtinUnit, productArticle, uipIncludeBatch, printerId, code);
+    editTemplate(id, name, productId, productGtin, productGtinUnit, productArticle, uipIncludeBatch, printerId, code, isPrintGtinUnit);
 
     if (window.innerWidth < 1200) {
         document.querySelector('.form-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });

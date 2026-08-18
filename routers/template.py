@@ -85,6 +85,7 @@ async def template_create(
         print_code: str = Form(...),
         is_active: bool = Form(True),
         uip_include_batch: bool = Form(False),
+        is_print_gtin_unit: bool = Form(False),
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_admin),
         endpoint: str='/templates'
@@ -146,7 +147,8 @@ async def template_create(
         printer_id=printer_id,
         print_code=print_code,
         is_active=is_active,
-        uip_include_batch=uip_include_batch
+        uip_include_batch=uip_include_batch,
+        is_print_gtin_unit=is_print_gtin_unit,
     )
     template = await template_crud.create(db, template_data)
 
@@ -168,6 +170,7 @@ async def template_create(
             'printer_name': printer.name,
             'is_active': template.is_active,
             'uip_include_batch': bool(template.uip_include_batch),
+            'is_print_gtin_unit': bool(template.is_print_gtin_unit),
             'print_code': template.print_code,
             'created_at': template.created_at.isoformat() if hasattr(template, 'created_at') else None,
         }
@@ -191,6 +194,7 @@ async def template_update(
         printer_id: UUID = Form(...),
         print_code: str = Form(...),
         uip_include_batch: bool = Form(False),
+        is_print_gtin_unit: bool = Form(False),
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_admin),
         endpoint: str = '/templates'
@@ -273,6 +277,7 @@ async def template_update(
         printer_id=printer_id,
         print_code=print_code,
         uip_include_batch=uip_include_batch,
+        is_print_gtin_unit=is_print_gtin_unit,
     )
     updated = await template_crud.update(db, template_id, template_data)
 
@@ -287,6 +292,7 @@ async def template_update(
                 'printer_id': str(updated.printer_id),
                 'is_active': updated.is_active,
                 'uip_include_batch': bool(updated.uip_include_batch),
+                'is_print_gtin_unit': bool(updated.is_print_gtin_unit),
                 'updated_at': updated.updated_at.isoformat() if hasattr(updated, 'updated_at') else None,
             }
         }
@@ -540,6 +546,7 @@ async def get_templates_by_product(
             "name": t.name,
             "is_active": t.is_active,
             "uip_include_batch": bool(t.uip_include_batch),
+            "is_print_gtin_unit": bool(t.is_print_gtin_unit),
             "printer_name": t.printer.name if t.printer else "Неизвестный принтер",
             "created_at": t.created_at.isoformat()
         }

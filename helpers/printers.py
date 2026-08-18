@@ -192,7 +192,8 @@ def substitute_placeholders(
     gtin: str = '',
     gtin_unit: str = '',
     article: str = '',
-    uip_include_batch: bool = True
+    uip_include_batch: bool = True,
+    datamatrix: str = ''
 ) -> str:
     """
     Единая функция подстановки плейсхолдеров — используется и при рендере
@@ -207,6 +208,8 @@ def substitute_placeholders(
         {expiration_date_str}     — ДД.ММ.ГГ
         {batch_number_str}        — партия(ДД.ММ.ГГ)
         {batch_number}            — номер партии как есть
+        {datamatrix}              — код DataMatrix из внешнего сервиса
+                                    (для шаблонов с is_print_gtin_unit)
 
     Плейсхолдеры УИП (DataMatrix, формат GS1):
         {uip_gtin}                — GTIN единицы продукции (14 цифр)
@@ -301,6 +304,10 @@ def substitute_placeholders(
     marking_batch_number = marking_date.strftime('%d%m%y')
     zpl_code = zpl_code.replace('{batch_number_str}', f'{batch_number}({marking_batch_number})')
     zpl_code = zpl_code.replace('{batch_number}', batch_number)
+
+    # ── DataMatrix из внешнего сервиса (шаблоны с is_print_gtin_unit) ────────
+    # Код уже получен от сервиса; если кода нет — плейсхолдер удаляется.
+    zpl_code = zpl_code.replace('{datamatrix}', datamatrix or '')
 
     # ── Гарантируем закрытие этикетки ────────────────────────────────────────
     if not zpl_code.strip().endswith('^XZ'):

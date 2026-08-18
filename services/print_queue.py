@@ -85,6 +85,9 @@ class PrintTask:
     buffer_limit: int = 25
     batch_size: int = 5
     uip_include_batch: bool = True
+    # Коды DataMatrix из внешнего сервиса (для шаблонов с is_print_gtin_unit):
+    # по одному коду на коробку; подставляются в плейсхолдер {datamatrix}.
+    datamatrix_codes: list = field(default_factory=list)
     retries: int = 0
     max_retries: int = 10
     created_at: datetime = field(default_factory=datetime.now)
@@ -467,6 +470,10 @@ class PrinterQueue:
                     gtin_unit=task.gtin_unit,
                     article=task.article,
                     uip_include_batch=task.uip_include_batch,
+                    datamatrix=(
+                        task.datamatrix_codes[i]
+                        if i < len(task.datamatrix_codes) else ''
+                    ),
                 )
                 label_bytes = box_zpl.encode('utf-8')
                 await asyncio.to_thread(
