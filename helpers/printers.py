@@ -134,44 +134,53 @@ def check_printer_status(ip: str, port: int = 9100, timeout: float = 3.0) -> dic
         p    = ribbon out (1 = нет ленты)
         t    = label waiting
         uuuuuuuu = осталось этикеток в задании
+
+    Пустой ответ (Empty response) — повторная попытка через 0.3с (принтер
+    может быть временно занят обработкой ~JA или другой immediate-команды).
     """
-    try:
-        with socket.create_connection((ip, port), timeout=timeout) as sock:
-            # Небольшая пауза после подключения (Zebra требует)
-            time.sleep(0.05)
+    max_retries = 2
+    for attempt in range(max_retries):
+        try:
+            with socket.create_connection((ip, port), timeout=timeout) as sock:
+                # Небольшая пауза после подключения (Zebra требует)
+                time.sleep(0.05)
 
-            # Отправляем команду
-            sock.sendall(b'~HS\r\n')
+                # Отправляем команду
+                sock.sendall(b'~HS\r\n')
 
-            # Читаем ответ с таймаутом (ждём минимум 2 строки из трёх)
-            sock.settimeout(min(timeout, 2.0))
-            response = b''
+                # Читаем ответ с таймаутом (ждём минимум 2 строки из трёх)
+                sock.settimeout(min(timeout, 2.0))
+                response = b''
 
-            while True:
-                try:
-                    chunk = sock.recv(512)
-                    if not chunk:
+                while True:
+                    try:
+                        chunk = sock.recv(512)
+                        if not chunk:
+                            break
+                        response += chunk
+                        if response.count(b'\x03\r\n') >= 2:
+                            break
+                    except socket.timeout:
                         break
-                    response += chunk
-                    if response.count(b'\x03\r\n') >= 2:
-                        break
-                except socket.timeout:
-                    break
 
-            if not response:
-                return {'ok': False, 'error': 'Empty response'}
+                if not response:
+                    if attempt < max_retries - 1:
+                        time.sleep(0.3)
+                        continue
+                    return {'ok': False, 'error': 'Empty response'}
 
-            return _parse_zebra_hs(response)
+                return _parse_zebra_hs(response)
 
-    except ConnectionRefusedError:
-        logger.error(f"Принтер {ip}:{port} отклоняет подключение")
-        return {'ok': False, 'error': 'ConnectionRefused'}
-    except socket.timeout:
-        logger.warning(f"Таймаут при получении статуса от {ip}:{port}")
-        return {'ok': False, 'error': 'Timeout'}
-    except Exception as e:
-        logger.exception(f"Ошибка при проверке статуса {ip}:{port}: {e}")
-        return {'ok': False, 'error': str(e)}
+        except ConnectionRefusedError:
+            logger.error(f"Принтер {ip}:{port} отклоняет подключение")
+            return {'ok': False, 'error': 'ConnectionRefused'}
+        except socket.timeout:
+            logger.warning(f"Таймаут при получении статуса от {ip}:{port}")
+            return {'ok': False, 'error': 'Timeout'}
+        except Exception as e:
+            logger.exception(f"Ошибка при проверке статуса {ip}:{port}: {e}")
+            return {'ok': False, 'error': str(e)}
+    return {'ok': False, 'error': 'Empty response'}
 
 def substitute_placeholders(
     zpl_code: str,
@@ -592,10 +601,19 @@ def clear_printer_queue(ip: str, port: int = 9100, printer_type: str = 'zebra') 
     TSC   — <ESC>!. (immediate-команда отмены всех заданий печати,
             работает даже когда принтер занят; CLS лишь чистит
             буфер изображения текущего задания и не отменяет очередь).
+
+    После команды очистки принтеру нужно время на обработку (~JA — Zebra
+    сбрасывает очередь и временно не отвечает на ~HS). Пауза 0.5с перед
+    возвратом гарантирует, что следующий запрос статуса не получит пустой
+    ответ.
     """
     if (printer_type or '').lower() == 'tsc':
-        return send_printer_command(ip, port, b'\x1b!.')
-    return send_printer_command(ip, port, b'~JA')
+        result = send_printer_command(ip, port, b'\x1b!.')
+    else:
+        result = send_printer_command(ip, port, b'~JA')
+    if result.get('success'):
+        time.sleep(0.5)
+    return result
 
 
 def restart_printer(ip: str, port: int = 9100, printer_type: str = 'zebra') -> dict:
