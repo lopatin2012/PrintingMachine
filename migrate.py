@@ -93,6 +93,16 @@ def column_length(cur, table: str, column: str):
     return row[0] if row else None
 
 
+def column_default(cur, table: str, column: str):
+    cur.execute(
+        "SELECT column_default FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = %s AND column_name = %s",
+        (table, column),
+    )
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
 # ---------------------------------------------------------------------------
 # Определение ревизии по маркерам схемы
 # ---------------------------------------------------------------------------
@@ -104,8 +114,14 @@ def detect_schema_revision(cur) -> str:
     if 'printers' not in tables:
         return 'bfd9a6d5bfd3'
 
+    # head: партия в УИП выключена по умолчанию (server_default = false).
+    if has_column(cur, 'code_templates', 'uip_include_batch') \
+            and column_default(cur, 'code_templates', 'uip_include_batch') == 'false':
+        return 'a6b7c8d9e0f1'
+    if has_column(cur, 'printers', 'buffer_limit') and has_column(cur, 'printers', 'batch_size'):
+        return 'a5b6c7d8e9f0'
     if has_column(cur, 'printers', 'printer_type'):
-        return 'a4b5c6d7e8f9'                       # head
+        return 'a4b5c6d7e8f9'
     if has_column(cur, 'code_templates', 'uip_include_batch'):
         return 'a3b4c5d6e7f8'                       # = 1805bce1d329 (без изменений схемы)
     if has_column(cur, 'products', 'article'):

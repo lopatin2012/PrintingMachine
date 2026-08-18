@@ -566,7 +566,7 @@ async def render_template_preview(
         gtin: str = Form(''),
         gtin_unit: str = Form(''),
         article: str = Form(''),
-        uip_include_batch: bool = Form(True),
+        uip_include_batch: bool = Form(False),
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_user)
 ):

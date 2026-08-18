@@ -312,7 +312,7 @@
 
                             <div class="form-group">
                                 <label class="checkbox-label" for="templateUipIncludeBatch">
-                                    <input type="checkbox" id="templateUipIncludeBatch" name="uip_include_batch" value="true" checked>
+                                    <input type="checkbox" id="templateUipIncludeBatch" name="uip_include_batch" value="true">
                                     <span>Включать партию в УИП (DataMatrix)</span>
                                 </label>
                                 <small class="form-hint">Если выключено — вместо партии в УИП идут нули, а УИП добивается до 32 знаков (GTIN единицы + дата + артикул сохраняются)</small>
@@ -555,7 +555,7 @@ function openAddTemplateForm() {
     document.getElementById('templatePrinter').value = '';
     document.getElementById('templateCode').value = '';
     const uipChk = document.getElementById('templateUipIncludeBatch');
-    if (uipChk) uipChk.checked = true;  // по умолчанию партия в УИП включена
+    if (uipChk) uipChk.checked = false;  // по умолчанию партия в УИП выключена
     document.getElementById('templateFormModal').classList.remove('hidden');
 
     // Прокрутка к началу формы (сброс скролла полей)
@@ -731,7 +731,7 @@ function renderPreviewWithParams() {
     const gtinUnit = document.getElementById('productGtinUnit')?.value.trim();
     const article = document.getElementById('productArticle')?.value.trim();
     const uipChk = document.getElementById('templateUipIncludeBatch');
-    const uipIncludeBatch = uipChk ? (uipChk.checked ? 'true' : 'false') : 'true';
+    const uipIncludeBatch = uipChk ? (uipChk.checked ? 'true' : 'false') : 'false';
 
     // Читаем 3 поля
     const markingRaw  = (document.getElementById('previewMarkingDate')?.value || '').trim();
@@ -1117,7 +1117,7 @@ function setupFormValidation() {
                     product_name: productSelect.options[productSelect.selectedIndex]?.text.split(' (')[0] || '',
                     printer_name: printerSelect.options[printerSelect.selectedIndex]?.text.split(' (')[0] || '',
                     print_code: code,
-                    uip_include_batch: document.getElementById('templateUipIncludeBatch')?.checked ?? true,
+                    uip_include_batch: document.getElementById('templateUipIncludeBatch')?.checked ?? false,
                     product_gtin_unit: document.getElementById('productGtinUnit')?.value || '',
                     product_article: document.getElementById('productArticle')?.value || '',
                 });
