@@ -567,7 +567,9 @@ async def render_template_preview(
         zpl_code: str = Form(...),
         batch_number: str = Form('01'),
         marking_date: str = Form('260305'),   # формат YYMMDD
-        expiration_date: str = Form(''),      # формат YYMMDD, если пусто — вычисляется +7 дней
+        expiration_date: str = Form(''),      # формат YYMMDD, если пусто — вычисляется
+        product_id: str = Form(''),           # id продукта: срок годности берётся из БД
+        date_expiration: str = Form(''),      # срок годности в днях (запасной вариант)
         first_box: int = Form(1),
         current_box: int = Form(1),
         gtin: str = Form(''),
@@ -582,7 +584,10 @@ async def render_template_preview(
 
     Формат дат: YYMMDD (например, 260305 = 05.03.2026).
     Срок годности (expiration_date) необязателен — если не передан,
-    вычисляется как дата маркировки + 7 дней (для предпросмотра).
+    вычисляется из срока годности продукта в БД (product_id →
+    product.date_expiration) как дата маркировки + N дней (как при
+    реальной печати); если продукт не указан — из date_expiration (дней);
+    иначе — +7 дней (для предпросмотра).
     """
     from datetime import datetime, timedelta
 
@@ -598,17 +603,34 @@ async def render_template_preview(
         except ValueError:
             marking_dt = datetime.today().date()
 
-        # ── expiration_date: если не передан или пустой — +7 дней
+        # ── expiration_date: приоритет 1 — явный срок годности (expiration_date);
+        #    приоритет 2 — срок годности продукта из БД (marking + product.date_expiration);
+        #    приоритет 3 — срок годности в днях из формы (date_expiration);
+        #    если ничего нет — +7 дней (для предпросмотра).
         ed = (expiration_date or '').strip()[:6]
+        expiration_dt = None
+        if len(ed) == 6:
+            try:
+                expiration_dt = datetime.strptime(ed, '%d%m%y').date()
+            except ValueError:
+                expiration_dt = None
 
-        try:
-            expiration_dt = (
-                datetime.strptime(ed, '%d%m%y').date()
-                if len(ed) == 6
-                else marking_dt + timedelta(days=7)
-            )
-        except ValueError:
-            expiration_dt = marking_dt + timedelta(days=7)
+        if expiration_dt is None:
+            exp_days = 0
+            pid = (product_id or '').strip()
+            if pid:
+                try:
+                    product = await product_crud.get(db, UUID(pid))
+                except ValueError:
+                    product = None
+                if product is not None:
+                    exp_days = product.date_expiration
+            if exp_days <= 0:
+                try:
+                    exp_days = int((date_expiration or '').strip() or 0)
+                except ValueError:
+                    exp_days = 0
+            expiration_dt = marking_dt + timedelta(days=exp_days if exp_days > 0 else 7)
 
         preview_code = substitute_placeholders(
             zpl_code,

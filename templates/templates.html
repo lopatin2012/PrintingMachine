@@ -5,7 +5,6 @@
 
 {% block css %}
 <link rel="stylesheet" href="/static/css/templates.css">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/github.min.css">
 {% endblock %}
 
 {% block header_title %}Шаблоны печати{% endblock %}
@@ -476,8 +475,6 @@ PRINT 1,1              // Печать 1 копии</code></pre>
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/highlight.min.js"></script>
-<script src="/static/js/zephir.min.js"></script>
 <script>
 window.isUserAdmin = {{ 'true' if user and user.role and user.role.is_admin else 'false' }};
 
@@ -748,6 +745,11 @@ function renderPreviewWithParams() {
     const uipChk = document.getElementById('templateUipIncludeBatch');
     const uipIncludeBatch = uipChk ? (uipChk.checked ? 'true' : 'false') : 'false';
 
+    // Выбранный продукт: срок годности для предпросмотра бэкенд берёт из БД
+    // (product.date_expiration), как при реальной печати.
+    const productSelect = document.getElementById('templateProduct');
+    const selectedProductId = productSelect?.value || '';
+
     // Читаем 3 поля
     const markingRaw  = (document.getElementById('previewMarkingDate')?.value || '').trim();
     const batchNumber = (document.getElementById('previewBatch')?.value || '01').trim();
@@ -776,7 +778,9 @@ function renderPreviewWithParams() {
             zpl_code: code,
             batch_number: batchNumber,
             marking_date: markingDate,
-            // expiration_date: не передаём — бэкенд вычисляет +7 дней автоматически
+            // expiration_date: не передаём — бэкенд вычисляет из срока годности
+            // продукта в БД (product_id) или +7 дней по умолчанию
+            product_id: selectedProductId,
             first_box: String(boxNumber),
             current_box: String(boxNumber),
             gtin: gtin,
