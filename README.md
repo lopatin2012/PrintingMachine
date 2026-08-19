@@ -17,7 +17,8 @@
 
 * регистрация по `IP:порт` (по умолчанию TCP 9100);
 * поддержка произвольного числа **типов принтеров** через реестр драйверов (`helpers/printer_drivers.py`): Zebra, TSC (аппликаторы с пачечной отправкой и контролем по пробегу), ZPL-совместимые (Honeywell, Datamax, Argox и др.);
-* проверка доступности и статуса принтера (команда `~HS` для ZPL / `<ESC>!S` для TSC: пауза, ошибки, бумага/риббон).
+* проверка доступности и статуса принтера (команда `~HS` для ZPL / `<ESC>!S` для TSC: пауза, ошибки, бумага/риббон);
+* страница **«Контроль принтеров»** (`/printers/control`): статус, активные задания, очистка очереди, перезапуск, **пауза/возобновление**, установка **контраста** и **скорости** печати (команды зависят от типа принтера и выполняются драйвером).
 
 **Продукты и шаблоны**
 
@@ -286,6 +287,10 @@ DataMatrix у внешнего сервиса (`services/datamatrix_service.py`)
 **Страницы:** `/` (главная), `/printing` (печать этикеток), `/printing/history` (история), `/workshops`, `/lines`, `/printers`, `/products`, `/templates`, `/users`, `/roles`, `/workshop-users`.
 
 **API печати:** `POST /printing/start`, `POST /api/printing/jobs/{job_id}/stop`, `GET /api/printing/jobs/user`, `GET /api/printing/jobs/active`, `GET /api/printing/template/{product_id}`, `GET /api/printing/printers`, `GET /api/printing/templates`.
+
+**API управления принтерами:** `POST /api/printers/{id}/status`, `POST /api/printers/{id}/clear-queue`, `POST /api/printers/{id}/restart`, `POST /api/printers/{id}/pause`, `POST /api/printers/{id}/resume`, `POST /api/printers/{id}/contrast` (JSON `{"value": N}`), `POST /api/printers/{id}/speed` (JSON `{"value": N}`).
+
+Диапазоны значений зависят от типа принтера: Zebra — контраст 0–30 (`print.darkness`), скорость 1–14 дюймов/с (`print.speed`); TSC — контраст 0–15 (`DENSITY`), скорость 1–6 (`SPEED`). Пауза/возобновление: Zebra — SGD `device.pause_print`, TSC — команды `PAUSE`/`RESUME` (TSPL2).
 
 ---
 

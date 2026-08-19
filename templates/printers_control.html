@@ -38,6 +38,7 @@
             <tbody>
                 {% for printer in printers %}
                 {% set st = printers_status.get(printer.id|string, {'state': 'offline', 'label': 'Недоступен', 'detail': ''}) %}
+                {% set params = printer_params.get(printer.id|string, {'contrast_min': 0, 'contrast_max': 30, 'speed_min': 1, 'speed_max': 14}) %}
                 <tr>
                     <td class="printer-cell">
                         <strong>{{ printer.name }}</strong>
@@ -74,9 +75,10 @@
                         {% endif %}
                     </td>
                     <td class="actions-cell">
-                        <button class="cmd-btn primary" onclick="checkStatus('{{ printer.id }}')">🔄 Статус</button>
-                        <button class="cmd-btn danger-btn" onclick="clearQueue('{{ printer.id }}', '{{ printer.name|e }}')">🧹 Очистить</button>
-                        <button class="cmd-btn" onclick="restartPrinter('{{ printer.id }}', '{{ printer.name|e }}')">🔁 Перезапуск</button>
+                        <button class="cmd-btn primary"
+                                onclick="openControlModal('{{ printer.id }}', '{{ printer.name|e }}', {{ params.contrast_min }}, {{ params.contrast_max }}, {{ params.speed_min }}, {{ params.speed_max }})">
+                            ⚙️ Управление
+                        </button>
                     </td>
                 </tr>
                 {% endfor %}
@@ -93,11 +95,67 @@
     {% endif %}
 </div>
 
+<!-- Модальное окно управления принтером -->
+<div id="controlModal" class="modal hidden">
+    <div class="modal-content control-modal-content">
+        <div class="modal-header">
+            <h3 id="controlModalTitle">⚙️ Управление принтером</h3>
+            <button class="close-btn" onclick="closeControlModal()">&times;</button>
+        </div>
+
+        <div class="control-modal-body">
+            <!-- Статус: текущее состояние + визуальная проверка -->
+            <div class="ctl-section">
+                <h4 class="ctl-section-title">🖨️ Статус принтера</h4>
+                <div class="ctl-status-row">
+                    <span class="status-badge status-offline" id="ctl-status-badge">—</span>
+                    <button class="cmd-btn primary" id="ctl-check-btn" onclick="checkControlStatus()">🔄 Проверить статус</button>
+                </div>
+                <div class="ctl-status-result hidden" id="ctl-status-result"></div>
+            </div>
+
+            <!-- Команды -->
+            <div class="ctl-section">
+                <h4 class="ctl-section-title">⚡ Команды</h4>
+                <div class="ctl-commands">
+                    <button class="cmd-btn danger-btn" onclick="controlCommand('clear-queue')">🧹 Очистить очередь</button>
+                    <button class="cmd-btn" onclick="controlCommand('restart')">🔁 Перезапуск</button>
+                    <button class="cmd-btn warning" onclick="controlCommand('pause')">⏸ Пауза</button>
+                    <button class="cmd-btn success" onclick="controlCommand('resume')">▶ Возобновить</button>
+                </div>
+            </div>
+
+            <!-- Параметры печати -->
+            <div class="ctl-section">
+                <h4 class="ctl-section-title">🎛️ Параметры печати</h4>
+                <div class="ctl-params">
+                    <div class="param-row">
+                        <label for="ctl-contrast">Контраст (<span id="ctl-contrast-range"></span>):</label>
+                        <input type="number" id="ctl-contrast" class="param-input">
+                        <button class="cmd-btn" onclick="setControlParam('contrast')">Установить</button>
+                    </div>
+                    <div class="param-row">
+                        <label for="ctl-speed">Скорость (<span id="ctl-speed-range"></span> дюйм/с):</label>
+                        <input type="number" id="ctl-speed" class="param-input">
+                        <button class="cmd-btn" onclick="setControlParam('speed')">Установить</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="modal-footer">
+            <button class="btn-secondary" onclick="closeControlModal()">Закрыть</button>
+        </div>
+    </div>
+</div>
+
 <div class="toast" id="toast"></div>
 {% endblock %}
 
 {% block scripts %}
 <script>
+// ─── Общие помощники ─────────────────────────────────────────────────────────
+
 function showToast(message, type = 'success') {
     const toast = document.getElementById('toast');
     toast.textContent = message;
@@ -106,6 +164,47 @@ function showToast(message, type = 'success') {
     clearTimeout(showToast._timer);
     showToast._timer = setTimeout(() => { toast.style.display = 'none'; }, 4000);
 }
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Преобразование detail из ответа ошибки (строка или список ошибок валидации) в текст.
+function detailToMessage(detail, fallback) {
+    if (typeof detail === 'string' && detail) return detail;
+    if (Array.isArray(detail)) {
+        const msgs = detail.map(e => (e && e.msg) || '').filter(Boolean);
+        if (msgs.length) return msgs.join('; ');
+    }
+    return fallback || 'Ошибка запроса';
+}
+
+// POST команды управления; возвращает Promise (тосты внутри).
+function postPrinterCommand(printerId, path, body, okMessage) {
+    return fetch(`/api/printers/${printerId}/${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined,
+    })
+        .then(async r => {
+            const data = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(detailToMessage(data.detail, `Ошибка ${r.status}`));
+            return data;
+        })
+        .then(data => {
+            showToast(data.message || okMessage, 'success');
+            return data;
+        })
+        .catch(err => {
+            showToast(err.message || 'Ошибка', 'error');
+            throw err;
+        });
+}
+
+// ─── Статусы в таблице (бейджи) ─────────────────────────────────────────────
 
 function setStatusBadge(printerId, state, label, detail, raw) {
     const badge = document.getElementById(`status-badge-${printerId}`);
@@ -116,27 +215,28 @@ function setStatusBadge(printerId, state, label, detail, raw) {
     if (detailEl) detailEl.innerHTML = (detail || '') + (raw ? ` <small>(${raw})</small>` : '');
 }
 
-function checkStatus(printerId) {
+function refreshPrinterBadge(printerId) {
     fetch(`/api/printers/${printerId}/status`, { method: 'POST' })
-        .then(r => r.ok ? r.json() : Promise.reject(r.status))
+        .then(r => (r.ok ? r.json() : null))
         .then(data => {
+            if (!data) return;
             const st = data.status || {};
             setStatusBadge(printerId, st.state, st.label, st.detail, st.raw);
         })
-        .catch(err => {
-            console.error('Ошибка проверки статуса:', err);
-            showToast(`Ошибка проверки статуса (${err})`, 'error');
-        });
+        .catch(() => {});
 }
 
 function refreshAllStatus() {
     const btn = document.getElementById('refreshAllBtn');
     if (btn) btn.disabled = true;
-    const ids = Array.from(document.querySelectorAll('.status-badge')).map(b => b.id.replace('status-badge-', ''));
+    // Только бейджи строк таблицы; бейдж в модальном окне (#ctl-status-badge)
+    // исключаем — его id не является UUID принтера.
+    const ids = Array.from(document.querySelectorAll('.status-badge:not(#ctl-status-badge)'))
+        .map(b => b.id.replace('status-badge-', ''));
     let done = 0;
     ids.forEach(id => {
         fetch(`/api/printers/${id}/status`, { method: 'POST' })
-            .then(r => r.ok ? r.json() : Promise.reject(r.status))
+            .then(r => (r.ok ? r.json() : Promise.reject(r.status)))
             .then(data => {
                 const st = data.status || {};
                 setStatusBadge(id, st.state, st.label, st.detail, st.raw);
@@ -147,21 +247,143 @@ function refreshAllStatus() {
     if (ids.length === 0 && btn) btn.disabled = false;
 }
 
-function clearQueue(printerId, name) {
-    if (!confirm(`Очистить очередь печати принтера "${name}"?\n\nНеотправленные/ожидающие задания будут удалены из очереди принтера.`)) return;
-    fetch(`/api/printers/${printerId}/clear-queue`, { method: 'POST' })
-        .then(r => r.ok ? r.json() : Promise.reject(r.status))
-        .then(data => showToast(data.message || 'Очередь очищена', 'success'))
-        .catch(err => showToast(`Не удалось очистить очередь: ${err}`, 'error'));
+// ─── Модальное окно управления принтером ────────────────────────────────────
+
+let controlPrinterId = null;
+let controlPrinterName = '';
+
+function openControlModal(printerId, name, contrastMin, contrastMax, speedMin, speedMax) {
+    controlPrinterId = printerId;
+    controlPrinterName = name || '';
+
+    document.getElementById('controlModalTitle').textContent = `⚙️ Управление принтером: ${name}`;
+
+    const contrastInput = document.getElementById('ctl-contrast');
+    contrastInput.min = contrastMin;
+    contrastInput.max = contrastMax;
+    contrastInput.value = Math.floor((contrastMin + contrastMax) / 2);
+    document.getElementById('ctl-contrast-range').textContent = `${contrastMin}–${contrastMax}`;
+
+    const speedInput = document.getElementById('ctl-speed');
+    speedInput.min = speedMin;
+    speedInput.max = speedMax;
+    speedInput.value = speedMin;
+    document.getElementById('ctl-speed-range').textContent = `${speedMin}–${speedMax}`;
+
+    // Сброс статусной области.
+    setModalBadge('offline', '—', '');
+    const result = document.getElementById('ctl-status-result');
+    result.classList.add('hidden');
+    result.innerHTML = '';
+
+    document.getElementById('controlModal').classList.remove('hidden');
 }
 
-function restartPrinter(printerId, name) {
-    if (!confirm(`Перезапустить принтер "${name}"?\n\nПринтер будет перезагружен. Убедитесь, что активная печать завершена или прервана.`)) return;
-    fetch(`/api/printers/${printerId}/restart`, { method: 'POST' })
-        .then(r => r.ok ? r.json() : Promise.reject(r.status))
-        .then(data => showToast(data.message || 'Команда перезапуска отправлена', 'success'))
-        .catch(err => showToast(`Не удалось перезапустить: ${err}`, 'error'));
+function closeControlModal() {
+    document.getElementById('controlModal').classList.add('hidden');
 }
+
+function setModalBadge(state, label, detail) {
+    const badge = document.getElementById('ctl-status-badge');
+    if (badge) {
+        badge.className = `status-badge ${state ? 'status-' + state : 'status-offline'}`;
+        badge.textContent = label || '—';
+    }
+}
+
+// Визуальная проверка статуса: спиннер → результат (как в старом тесте).
+function checkControlStatus() {
+    if (!controlPrinterId) return;
+    const btn = document.getElementById('ctl-check-btn');
+    const result = document.getElementById('ctl-status-result');
+    btn.disabled = true;
+    result.classList.remove('hidden');
+    result.innerHTML = `
+        <div class="ctl-status-spinner">
+            <div class="spinner"></div>
+            <p>Проверка статуса принтера...</p>
+        </div>`;
+
+    fetch(`/api/printers/${controlPrinterId}/status`, { method: 'POST' })
+        .then(async r => {
+            const data = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(detailToMessage(data.detail, `Ошибка ${r.status}`));
+            return data;
+        })
+        .then(data => {
+            const st = data.status || {};
+            setModalBadge(st.state, st.label, st.detail);
+            setStatusBadge(controlPrinterId, st.state, st.label, st.detail, st.raw);
+            renderStatusResult(st);
+        })
+        .catch(err => {
+            setModalBadge('offline', 'Недоступен', err.message || '');
+            renderStatusResult({ state: 'error', label: 'Ошибка проверки', detail: err.message || 'Не удалось получить статус' });
+        })
+        .finally(() => { btn.disabled = false; });
+}
+
+const STATUS_ICONS = { online: '✅', paused: '⏸', printing: '🖨️', error: '⚠️', offline: '❌' };
+
+function renderStatusResult(st) {
+    const result = document.getElementById('ctl-status-result');
+    const state = st.state || 'offline';
+    const icon = STATUS_ICONS[state] || 'ℹ️';
+    const cls = ['online', 'printing'].includes(state) ? 'success' : (state === 'paused' ? 'warning' : 'error');
+    result.innerHTML = `
+        <div class="ctl-status-card ${cls}">
+            <div class="ctl-status-icon">${icon}</div>
+            <div class="ctl-status-text">
+                <strong>${escapeHtml(st.label || '')}</strong>
+                <div class="ctl-status-detail-text">${escapeHtml(st.detail || '')}</div>
+            </div>
+        </div>`;
+}
+
+// Команды из модального окна: очистка, перезапуск, пауза, возобновление.
+function controlCommand(path) {
+    if (!controlPrinterId) return;
+    const confirms = {
+        'clear-queue': `Очистить очередь печати принтера "${controlPrinterName}"?\n\nНеотправленные/ожидающие задания будут удалены из очереди принтера.`,
+        'restart': `Перезапустить принтер "${controlPrinterName}"?\n\nПринтер будет перезагружен. Убедитесь, что активная печать завершена или прервана.`,
+        'pause': `Поставить принтер "${controlPrinterName}" на паузу?\n\nПечать будет приостановлена до снятия паузы.`,
+        'resume': `Снять принтер "${controlPrinterName}" с паузы?`,
+    };
+    const labels = {
+        'clear-queue': 'Очередь очищена',
+        'restart': 'Команда перезапуска отправлена',
+        'pause': 'Принтер поставлен на паузу',
+        'resume': 'Принтер снят с паузы',
+    };
+    if (confirms[path] && !confirm(confirms[path])) return;
+    postPrinterCommand(controlPrinterId, path, null, labels[path])
+        .then(() => refreshPrinterBadge(controlPrinterId))
+        .catch(() => {});
+}
+
+// Параметры печати: контраст, скорость.
+function setControlParam(param) {
+    if (!controlPrinterId) return;
+    const input = document.getElementById(param === 'contrast' ? 'ctl-contrast' : 'ctl-speed');
+    const value = parseInt(input?.value, 10);
+    if (isNaN(value)) {
+        showToast('Укажите числовое значение', 'error');
+        return;
+    }
+    const min = parseInt(input.min, 10);
+    const max = parseInt(input.max, 10);
+    if (value < min || value > max) {
+        showToast(`Значение должно быть от ${min} до ${max}`, 'error');
+        return;
+    }
+    const label = param === 'contrast' ? 'Контраст установлен' : 'Скорость установлена';
+    postPrinterCommand(controlPrinterId, param, { value }, label).catch(() => {});
+}
+
+// Закрытие модального окна по Escape.
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeControlModal();
+});
 
 // Автообновление статусов каждые 20 секунд.
 setInterval(() => {

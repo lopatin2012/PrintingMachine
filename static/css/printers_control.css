@@ -52,10 +52,69 @@
 /* Внимание: класс назван danger-btn, т.к. .danger в base.css задаёт красный фон !important */
 .cmd-btn.danger-btn { background: #fdf2f3; border-color: #f5c6cb; color: #a71d2a; }
 .cmd-btn.danger-btn:hover { background: #f8d7da; color: #721c24; }
+.cmd-btn.warning { background: #fff3cd; border-color: #ffe69c; color: #856404; }
+.cmd-btn.warning:hover { background: #ffe69c; color: #664d03; }
+.cmd-btn.success { background: #d4edda; border-color: #a3d9b1; color: #155724; }
+.cmd-btn.success:hover { background: #c3e6cb; color: #0f3d1c; }
+.cmd-btn.small { padding: 4px 10px; font-size: 12px; }
 .cmd-btn:disabled { opacity: 0.6; cursor: wait; }
+
+/* Параметры печати (в модальном окне) */
+.param-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--gray); }
+.param-row label { white-space: nowrap; min-width: 130px; }
+.param-input {
+    width: 70px; padding: 6px 8px; border: 1px solid var(--border);
+    border-radius: 6px; font-size: 13px; text-align: center;
+}
 
 /* Компактные ячейки действий */
 .actions-cell { gap: 6px; }
+
+/* ─── Модальное окно управления принтером ─────────────────────────────── */
+.control-modal-content { max-width: 520px; }
+.control-modal-body { display: flex; flex-direction: column; gap: 18px; padding: 8px 4px; }
+.ctl-section { display: flex; flex-direction: column; gap: 10px; }
+.ctl-section-title {
+    margin: 0; padding-bottom: 8px; border-bottom: 1px solid var(--border);
+    font-size: 15px; color: var(--primary);
+}
+.ctl-status-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.ctl-status-result { min-height: 60px; }
+.ctl-status-result.hidden { display: none; }
+.ctl-status-spinner { display: flex; align-items: center; gap: 12px; color: var(--gray); font-size: 14px; }
+.spinner {
+    width: 22px; height: 22px; border: 3px solid rgba(0,0,0,0.1);
+    border-top-color: var(--primary); border-radius: 50%;
+    animation: ctl-spin 0.8s linear infinite; flex-shrink: 0;
+}
+@keyframes ctl-spin { to { transform: rotate(360deg); } }
+
+/* Карточка результата проверки статуса */
+.ctl-status-card {
+    display: flex; align-items: flex-start; gap: 12px;
+    padding: 14px 16px; border-radius: 10px; border: 1px solid var(--border);
+}
+.ctl-status-card.success { background: #d4edda; border-color: #a3d9b1; color: #155724; }
+.ctl-status-card.warning { background: #fff3cd; border-color: #ffe69c; color: #856404; }
+.ctl-status-card.error { background: #fdf2f3; border-color: #f5c6cb; color: #a71d2a; }
+.ctl-status-icon { font-size: 26px; line-height: 1; }
+.ctl-status-text { font-size: 14px; }
+.ctl-status-text strong { display: block; margin-bottom: 4px; }
+.ctl-status-detail-text { font-size: 13px; opacity: 0.9; }
+
+/* Команды: сетка 2×2 */
+.ctl-commands { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.ctl-commands .cmd-btn { width: 100%; padding: 10px 12px; font-size: 14px; }
+
+/* Параметры: столбик */
+.ctl-params { display: flex; flex-direction: column; gap: 10px; }
+.ctl-params .param-input { flex-shrink: 0; }
+
+/* Подвал модального окна */
+.modal-footer {
+    display: flex; justify-content: flex-end; gap: 8px;
+    padding-top: 14px; margin-top: 6px; border-top: 1px solid var(--border);
+}
 
 /* Тосты */
 .toast { position: fixed; top: 20px; right: 20px; padding: 10px 18px; border-radius: 8px; color: white; font-weight: 600; z-index: 1000; display: none; box-shadow: var(--shadow); }
@@ -66,4 +125,5 @@
     .control-header { flex-direction: column; align-items: stretch; }
     .actions-cell { flex-direction: column; align-items: stretch; }
     .cmd-btn { width: 100%; }
+    .ctl-commands { grid-template-columns: 1fr; }
 }

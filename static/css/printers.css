@@ -50,22 +50,6 @@
     color: #495057;
 }
 
-/* Кнопки тестирования */
-.test-btn {
-    background: linear-gradient(135deg, #75d8a5 0%, #85e2b5 100%);
-    color: white;
-}
-
-.test-btn:hover {
-    background: linear-gradient(135deg, #65c295 0%, #75d8a5 100%);
-}
-
-/* Модальное окно тестирования */
-.test-result {
-    text-align: center;
-    padding: 24px;
-}
-
 .spinner {
     display: inline-block;
     width: 30px;

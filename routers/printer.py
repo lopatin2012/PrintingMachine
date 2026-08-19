@@ -1,16 +1,12 @@
 # routers/printer.py
 
 import asyncio
-import os
-import subprocess
 import ipaddress
 import logging
-import platform
 import time
 from uuid import UUID
-import socket
 
-from fastapi import APIRouter, Form, Request, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Form, Request, Depends, HTTPException, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -20,7 +16,7 @@ from database import get_db
 from crud.printer import PrinterCRUD
 from schemas import PrinterCreate, PrinterUpdate
 from models import User, Line, Printer, Workshop, PrintJob
-from helpers.printer_drivers import get_printer_driver, printer_types
+from helpers.printer_drivers import get_driver_or_default, get_printer_driver, printer_types
 from helpers.printers import (
     check_printer_status_async,
     clear_printer_queue_async,
@@ -344,50 +340,6 @@ async def printer_delete(
             status_code=status.HTTP_303_SEE_OTHER
         )
 
-@router.post('/printers/{printer_id}/test')
-async def test_printer_connection(
-        printer_id: UUID,
-        db: AsyncSession = Depends(get_db),
-        current_user: User = Depends(get_current_admin)
-):
-    """Проверка доступности принтера"""
-    printer = await printer_crud.get(db, printer_id)
-    if not printer:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail='Принтер не найден'
-        )
-
-    try:
-        param = '-n' if platform.system().lower() == 'windows' else '-c'
-        command = ['ping', param, '1', printer.ip_address]
-
-        # ping — блокирующий процесс, выполняем в отдельном потоке,
-        # чтобы не «замораживать» event loop.
-        output = await asyncio.to_thread(
-            subprocess.run, command, capture_output=True, text=True, timeout=1
-        )
-        is_available = output.returncode == 0
-        message = f'В сети'
-        logger.info(f'Принтер {printer.name} доступен')
-    except (socket.timeout, socket.error, OSError) as e:
-        is_available = False
-        message = f' Ошибка: {str(e)}'
-        logger.error(f'Ошибка подключения к принтеру {printer.name}: {e}')
-
-    return {
-        'status': 'success' if is_available else 'error',
-        'available': is_available,
-        'message': message,
-        'printer': {
-            'id': str(printer.id),
-            'name': printer.name,
-            'ip': printer.ip_address,
-            'port': printer.port_address,
-            'printer_type': printer.printer_type
-        }
-    }
-
 
 # ─── Управление принтерами: статус, очередь, команды ─────────────────────────
 
@@ -526,6 +478,17 @@ async def printer_control_page(
     # без ожидания сети; живой статус подтянет refreshAllStatus в браузере).
     printers_status = _get_cached_printer_statuses(printers)
 
+    # Диапазоны параметров печати для формы управления (из драйвера типа).
+    printer_params = {}
+    for p in printers:
+        driver = get_driver_or_default(p.printer_type)
+        printer_params[str(p.id)] = {
+            'contrast_min': driver.contrast_min,
+            'contrast_max': driver.contrast_max,
+            'speed_min': driver.speed_min,
+            'speed_max': driver.speed_max,
+        }
+
     return templates.TemplateResponse(
         'printers_control.html',
         {
@@ -533,6 +496,7 @@ async def printer_control_page(
             'printers': printers,
             'printers_status': printers_status,
             'jobs_by_printer': jobs_by_printer,
+            'printer_params': printer_params,
             'user': current_user,
         }
     )
@@ -606,3 +570,125 @@ async def api_printer_restart(
         f'(тип: {printer.printer_type}) пользователем {current_user.login}'
     )
     return {'success': True, 'printer_id': str(printer.id), 'message': 'Команда перезапуска отправлена'}
+
+
+# ─── Управление параметрами печати: контраст, скорость, пауза ────────────────
+# Команды зависят от типа принтера и выполняются драйвером
+# (helpers/printer_drivers.py) в отдельном потоке — без блокировки event loop.
+
+def _run_printer_command(printer, method: str, *args):
+    """Выполнить команду драйвера в отдельном потоке."""
+    driver = get_driver_or_default(printer.printer_type)
+    return asyncio.to_thread(getattr(driver, method), printer.ip_address, printer.port_address, *args)
+
+
+@router.post('/api/printers/{printer_id}/contrast')
+async def api_printer_set_contrast(
+        printer_id: UUID,
+        value: int = Body(..., ge=0, le=30, embed=True),
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_admin)
+):
+    """Установить контраст (плотность) печати."""
+    printer = await printer_crud.get(db, printer_id)
+    if not printer:
+        raise HTTPException(status_code=404, detail='Принтер не найден')
+
+    result = await _run_printer_command(printer, 'set_contrast', value)
+    if not result.get('success'):
+        raise HTTPException(
+            status_code=400,
+            detail=f'Не удалось установить контраст: {result.get("error", "неизвестная ошибка")}',
+        )
+
+    logger.info(
+        f'Контраст принтера "{printer.name}" установлен: {value} '
+        f'(тип: {printer.printer_type}) пользователем {current_user.login}'
+    )
+    return {
+        'success': True,
+        'printer_id': str(printer.id),
+        'message': f'Контраст установлен: {value}'
+    }
+
+
+@router.post('/api/printers/{printer_id}/speed')
+async def api_printer_set_speed(
+        printer_id: UUID,
+        value: int = Body(..., ge=1, le=14, embed=True),
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_admin)
+):
+    """Установить скорость печати (дюймов в секунду)."""
+    printer = await printer_crud.get(db, printer_id)
+    if not printer:
+        raise HTTPException(status_code=404, detail='Принтер не найден')
+
+    result = await _run_printer_command(printer, 'set_speed', value)
+    if not result.get('success'):
+        raise HTTPException(
+            status_code=400,
+            detail=f'Не удалось установить скорость: {result.get("error", "неизвестная ошибка")}',
+        )
+
+    logger.info(
+        f'Скорость принтера "{printer.name}" установлена: {value} дюймов/с '
+        f'(тип: {printer.printer_type}) пользователем {current_user.login}'
+    )
+    return {
+        'success': True,
+        'printer_id': str(printer.id),
+        'message': f'Скорость установлена: {value} дюймов/с'
+    }
+
+
+@router.post('/api/printers/{printer_id}/pause')
+async def api_printer_pause(
+        printer_id: UUID,
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_admin)
+):
+    """Поставить принтер на паузу."""
+    printer = await printer_crud.get(db, printer_id)
+    if not printer:
+        raise HTTPException(status_code=404, detail='Принтер не найден')
+
+    result = await _run_printer_command(printer, 'pause')
+    if not result.get('success'):
+        raise HTTPException(
+            status_code=400,
+            detail=f'Не удалось поставить на паузу: {result.get("error", "неизвестная ошибка")}',
+        )
+
+    logger.info(f'Принтер "{printer.name}" поставлен на паузу пользователем {current_user.login}')
+    return {
+        'success': True,
+        'printer_id': str(printer.id),
+        'message': 'Принтер поставлен на паузу'
+    }
+
+
+@router.post('/api/printers/{printer_id}/resume')
+async def api_printer_resume(
+        printer_id: UUID,
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_admin)
+):
+    """Снять принтер с паузы."""
+    printer = await printer_crud.get(db, printer_id)
+    if not printer:
+        raise HTTPException(status_code=404, detail='Принтер не найден')
+
+    result = await _run_printer_command(printer, 'resume')
+    if not result.get('success'):
+        raise HTTPException(
+            status_code=400,
+            detail=f'Не удалось снять с паузы: {result.get("error", "неизвестная ошибка")}',
+        )
+
+    logger.info(f'Принтер "{printer.name}" снят с паузы пользователем {current_user.login}')
+    return {
+        'success': True,
+        'printer_id': str(printer.id),
+        'message': 'Принтер снят с паузы'
+    }

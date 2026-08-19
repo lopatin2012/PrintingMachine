@@ -130,10 +130,6 @@
                                 onclick='deletePrinter("{{ printer.id }}", "{{ printer.name|e }}")'>
                             🗑️ Удалить
                         </button>
-                        <button class="table-btn test-btn"
-                                onclick='testPrinterConnection("{{ printer.id }}", "{{ printer.ip_address|e }}", {{ printer.port_address }})'>
-                            🔄 Проверить
-                        </button>
                     </td>
                     {% endif %}
                 </tr>
@@ -310,20 +306,6 @@
             </form>
         </div>
     </div>
-
-    <!-- Модальное окно тестирования подключения -->
-    <div id="testConnectionModal" class="modal hidden">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>🔄 Проверка подключения</h3>
-                <button class="close-btn" onclick="closeTestModal()">&times;</button>
-            </div>
-            <div class="test-result" id="testResult">
-                <p>Подключение к принтеру...</p>
-                <div class="spinner"></div>
-            </div>
-        </div>
-    </div>
 </div>
 {% endblock %}
 
@@ -484,84 +466,6 @@ function deletePrinter(id, name) {
     }
 }
 
-// Проверить подключение к принтеру
-function testPrinterConnection(id, ip, port) {
-    document.getElementById('testConnectionModal').classList.remove('hidden');
-    const resultDiv = document.getElementById('testResult');
-    resultDiv.innerHTML = `
-        <p>Проверка подключения к принтеру...</p>
-        <div class="spinner"></div>
-        <small style="display:block; margin-top:12px; color:#6c757d;">
-            Проверка: ${ip}:${port} (таймаут 3 сек)
-        </small>
-    `;
-
-    // Отправляем запрос на бэкенд
-    fetch(`/printers/${id}/test`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-Requested-With': 'XMLHttpRequest'
-        },
-        credentials: 'same-origin' // Для передачи cookies
-    })
-    .then(response => {
-        if (!response.ok) {
-            throw new Error(`Сервер вернул ошибку ${response.status}`);
-        }
-        return response.json();
-    })
-    .then(data => {
-        if (data.available) {
-            resultDiv.innerHTML = `
-                <div class="alert success" style="padding:20px; text-align:center;">
-                    <h3 style="margin:0 0 12px; color:#2e7d32;">Принтер доступен!</h3>
-                    <p style="margin:0 0 12px; font-size:16px;">${data.message}</p>
-                </div>
-                <button class="btn-submit" onclick="closeTestModal()" style="margin-top:20px; width:100%; padding:12px; font-size:16px;">
-                    Закрыть
-                </button>
-            `;
-        } else {
-            resultDiv.innerHTML = `
-                <div class="alert error" style="padding:20px; text-align:center;">
-                    <h3 style="margin:0 0 12px; color:#a71d2a;">Принтер недоступен!</h3>
-                    <p style="margin:0 0 12px; font-size:16px; margin-bottom:16px;">${data.message}</p>
-                    <div style="background:#fff3cd; border-left:4px solid #ffc107; padding:12px; border-radius:6px; margin-top:16px; text-align:left;">
-                        <strong>Возможные причины:</strong>
-                        <ul style="margin:8px 0 0 20px; padding-left:0;">
-                            <li>Принтер выключен или не подключён к сети</li>
-                            <li>Неверный IP-адрес или порт</li>
-                            <li>Брандмауэр блокирует подключение</li>
-                            <li>Принтер занят другой задачей</li>
-                        </ul>
-                    </div>
-                </div>
-                <button class="btn-secondary" onclick="closeTestModal()" style="margin-top:20px; width:100%; padding:12px; font-size:16px;">
-                    Закрыть
-                </button>
-            `;
-        }
-    })
-    .catch(error => {
-        console.error('Ошибка при проверке подключения:', error);
-        resultDiv.innerHTML = `
-            <div class="alert error" style="padding:20px; text-align:center;">
-                <h3 style="margin:0 0 12px; color:#a71d2a;">Ошибка проверки</h3>
-                <p style="margin:0 0 12px; font-size:16px;">${error.message || 'Не удалось связаться с сервером'}</p>
-            </div>
-            <button class="btn-secondary" onclick="closeTestModal()" style="margin-top:20px; width:100%; padding:12px; font-size:16px;">
-                Закрыть
-            </button>
-        `;
-    });
-}
-
-// Закрыть модальное окно тестирования
-function closeTestModal() {
-    document.getElementById('testConnectionModal').classList.add('hidden');
-}
-
 // Сброс кнопки формы
 function resetFormButton() {
     const submitBtn = document.getElementById('formSubmitBtn');
@@ -577,8 +481,6 @@ function setupModalCloseHandlers() {
             if (event.target === modal) {
                 if (modal.id === 'printerFormModal') {
                     closePrinterForm();
-                } else if (modal.id === 'testConnectionModal') {
-                    closeTestModal();
                 }
             }
         });
@@ -588,7 +490,6 @@ function setupModalCloseHandlers() {
     document.addEventListener('keydown', function(event) {
         if (event.key === 'Escape') {
             closePrinterForm();
-            closeTestModal();
         }
     });
 }

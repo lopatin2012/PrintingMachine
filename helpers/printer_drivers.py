@@ -112,6 +112,41 @@ class PrinterDriver(ABC):
         """Перезапустить принтер."""
         return send_printer_command(ip, port, self.restart_cmd)
 
+    # ── Параметры печати и пауза (страница «Контроль принтеров») ────────
+    # Диапазоны значений для формы управления (валидируются драйвером).
+    contrast_min: int = 0
+    contrast_max: int = 30
+    speed_min: int = 1
+    speed_max: int = 14
+
+    def set_contrast(self, ip: str, port: int = 9100, value: int = None) -> dict:
+        """Установить контраст (плотность) печати."""
+        return {
+            'success': False,
+            'error': 'Установка контраста не поддерживается для этого типа принтера',
+        }
+
+    def set_speed(self, ip: str, port: int = 9100, value: int = None) -> dict:
+        """Установить скорость печати (дюймов в секунду)."""
+        return {
+            'success': False,
+            'error': 'Установка скорости не поддерживается для этого типа принтера',
+        }
+
+    def pause(self, ip: str, port: int = 9100) -> dict:
+        """Поставить принтер на паузу."""
+        return {
+            'success': False,
+            'error': 'Пауза не поддерживается для этого типа принтера',
+        }
+
+    def resume(self, ip: str, port: int = 9100) -> dict:
+        """Снять принтер с паузы."""
+        return {
+            'success': False,
+            'error': 'Возобновление не поддерживается для этого типа принтера',
+        }
+
     # ── Контроль очереди (аппликаторы) ─────────────────────────────────
 
     def mileage(self, ip: str, port: int = 9100, timeout: float = 1.5):
@@ -138,6 +173,34 @@ class ZebraDriver(PrinterDriver):
 
     batch_send = True
 
+    # ── Параметры печати и пауза (команды SGD, работают по TCP 9100) ─────
+
+    def set_contrast(self, ip: str, port: int = 9100, value: int = None) -> dict:
+        value = int(value)
+        if not (self.contrast_min <= value <= self.contrast_max):
+            return {
+                'success': False,
+                'error': f'Контраст должен быть от {self.contrast_min} до {self.contrast_max}',
+            }
+        return send_printer_command(
+            ip, port, f'~SD{value}"\r\n'.encode())
+
+    def set_speed(self, ip: str, port: int = 9100, value: int = None) -> dict:
+        value = int(value)
+        if not (self.speed_min <= value <= self.speed_max):
+            return {
+                'success': False,
+                'error': f'Скорость должна быть от {self.speed_min} до {self.speed_max} дюймов/с',
+            }
+        return send_printer_command(
+            ip, port, f'^PR{value},{value}"\r\n'.encode())
+
+    def pause(self, ip: str, port: int = 9100) -> dict:
+        return send_printer_command(ip, port, b'~JP\r\n')
+
+    def resume(self, ip: str, port: int = 9100) -> dict:
+        return send_printer_command(ip, port, b'~PS\r\n')
+
 
 class TscDriver(PrinterDriver):
     """Аппликаторы TSC (PEX-2340 и др.).
@@ -158,6 +221,38 @@ class TscDriver(PrinterDriver):
     status_cmd = b'\x1b!S'
     clear_cmd = b'\x1b!.'
     restart_cmd = b'\x1b!C'
+
+    # Диапазоны параметров печати TSPL2 (DENSITY 0-15, SPEED 1-6).
+    contrast_min: int = 0
+    contrast_max: int = 15
+    speed_min: int = 1
+    speed_max: int = 6
+
+    def set_contrast(self, ip: str, port: int = 9100, value: int = None) -> dict:
+        value = int(value)
+        if not (self.contrast_min <= value <= self.contrast_max):
+            return {
+                'success': False,
+                'error': f'Контраст должен быть от {self.contrast_min} до {self.contrast_max}',
+            }
+        # Команда TSPL2 DENSITY; для конкретной модели может потребоваться
+        # уточнение (например, через панель принтера).
+        return send_printer_command(ip, port, f'DENSITY {value}\r\n'.encode())
+
+    def set_speed(self, ip: str, port: int = 9100, value: int = None) -> dict:
+        value = int(value)
+        if not (self.speed_min <= value <= self.speed_max):
+            return {
+                'success': False,
+                'error': f'Скорость должна быть от {self.speed_min} до {self.speed_max} дюймов/с',
+            }
+        return send_printer_command(ip, port, f'SPEED {value}\r\n'.encode())
+
+    def pause(self, ip: str, port: int = 9100) -> dict:
+        return send_printer_command(ip, port, b'PAUSE\r\n')
+
+    def resume(self, ip: str, port: int = 9100) -> dict:
+        return send_printer_command(ip, port, b'RESUME\r\n')
 
     def status(self, ip: str, port: int = 9100, timeout: float = 3.0) -> dict:
         return check_printer_status_tsc(ip, port, timeout)
