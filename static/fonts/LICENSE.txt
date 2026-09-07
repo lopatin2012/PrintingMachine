@@ -1,0 +1,16 @@
+Roboto Condensed
+================
+
+Font family: Roboto Condensed
+Copyright 2011 Google Inc.
+Source: Google Fonts (https://fonts.google.com/specimen/Roboto+Condensed)
+
+Licensed under the SIL Open Font License, Version 1.1
+(https://scripts.sil.org/OFL).
+
+This font is used only by the optional local fallback of the label preview
+(zplr_preview_server.mjs). The primary preview engine is Labelary (external
+HTTP service); this font is NOT used for printing.
+
+The full OFL 1.1 license text:
+https://openfontlicense.org/open-font-license-official-text/

@@ -1,5 +1,8 @@
 aiosqlite==0.22.1
 alembic==1.18.0
+python-barcode==0.16.1
+pylibdmtx==0.1.10
+setuptools==84.0.0
 annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.12.0

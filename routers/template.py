@@ -1,9 +1,9 @@
 # routers/code_template.py
 
 import logging
+import asyncio
 from uuid import UUID
 from typing import Optional
-import httpx
 
 from fastapi import APIRouter, Form, Request, Depends, HTTPException, status, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
@@ -20,7 +20,11 @@ from models import User, CodeTemplate, Product, Printer
 from templates_config import templates
 from security import get_current_user, get_current_admin
 
-from services.zpl_renderer import ZPLRenderError, render_zpl_preview
+from services.zpl_renderer import (
+    ZPLRenderError,
+    render_zpl_preview,
+)
+from services.preview_renderer import render_preview_png
 
 from helpers.responses import ajax_or_redirect
 from helpers.printers import substitute_placeholders
@@ -412,7 +416,7 @@ async def template_preview(
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_user)
 ):
-    """Предпросмотр этикетки: рендер ZPL-кода через Labelary API."""
+    """Предпросмотр этикетки: Labelary -> локальный zplr/PIL."""
     if not code.strip():
         raise HTTPException(status_code=400, detail='ZPL-код пуст')
 
@@ -420,43 +424,19 @@ async def template_preview(
     if not preview_code.endswith('^XZ'):
         preview_code += '\n^XZ'
 
-    # Размеры этикетки из кода (в дюймах), по умолчанию 4x6.
-    pw, ll = 4, 6
-    for line in preview_code.split('\n'):
-        if '^PW' in line:
-            try:
-                pw = max(1, min(int(line.split('^PW')[-1].split()[0]) // 200, 10))
-            except ValueError:
-                pass
-        if '^LL' in line:
-            try:
-                ll = max(1, min(int(line.split('^LL')[-1].split()[0]) // 200, 10))
-            except ValueError:
-                pass
-
-    url = f"http://api.labelary.com/v1/printers/8dpmm/labels/{pw}x{ll}/0/"
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(
-                url,
-                content=preview_code.encode('utf-8'),
-                headers={'Content-Type': 'application/x-www-form-urlencoded'}
-            )
-    except httpx.RequestError as e:
-        logger.error(f'Labelary API недоступен: {e}')
-        raise HTTPException(
-            status_code=502,
-            detail='Сервис рендеринга (Labelary) недоступен'
+        png_bytes, engine = await asyncio.to_thread(render_preview_png, preview_code)
+        return Response(
+            content=png_bytes,
+            media_type='image/png',
+            headers={'X-Render-Engine': engine},
         )
-
-    if response.status_code != 200:
-        logger.warning(f'Ошибка Labelary API {response.status_code}: {response.text[:200]}')
+    except Exception as e:
+        logger.error(f'Ошибка рендеринга предпросмотра: {e}')
         raise HTTPException(
-            status_code=502,
-            detail=f'Ошибка сервиса рендеринга: {response.status_code}'
+            status_code=500,
+            detail=f'Ошибка генерации предпросмотра: {str(e)}'
         )
-
-    return Response(content=response.content, media_type='image/png')
 
 @router.get('/templates/new', response_class=HTMLResponse)
 async def template_new_page(
@@ -648,57 +628,25 @@ async def render_template_preview(
         if not preview_code.strip().endswith('^XZ'):
             preview_code = preview_code.strip() + '\n^XZ'
 
-        # Значения размеров по умолчанию.
-        pw = 5
-        ll = 5
-
-        # Поиск размеров в коде ZPL.
-        for i in zpl_code.split('\n'):
-            try:
-                if '^PW' in i:
-                    pw = max([min([int(i.replace('^PW', '')) // 200, 10]), 5])
-                if '^LL' in i:
-                    ll = max([min([int(i.replace('^LL', '')) // 200, 10]), 5])
-            except ValueError:
-                pw = 5
-                ll = 5
-
-        # Отправка на рендеринг через существующий эндпоинт
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.post(
-                f'http://api.labelary.com/v1/printers/8dpmm/labels/{pw}x{ll}/0/',
-                content=preview_code.encode('utf-8'),
-                headers={'Content-Type': 'application/x-www-form-urlencoded'}
+        # Рендер ZPL → PNG: Labelary -> локальный zplr/PIL.
+        try:
+            png_bytes, engine = await asyncio.to_thread(
+                render_preview_png, preview_code,
+            )
+            return Response(
+                content=png_bytes,
+                media_type='image/png',
+                headers={'X-Render-Engine': engine},
+            )
+        except Exception as e:
+            logger.error(f'Ошибка рендеринга предпросмотра: {e}')
+            raise HTTPException(
+                status_code=500,
+                detail=f'Ошибка генерации предпросмотра: {str(e)}'
             )
 
-        if response.status_code == 200:
-            return Response(content=response.content, media_type='image/png')
-        else:
-            # При ошибке возвращаем локальную заглушку с информацией об ошибке
-            from PIL import Image, ImageDraw, ImageFont
-            from io import BytesIO
-
-            img = Image.new('RGB', (400, 300), 'white')
-            draw = ImageDraw.Draw(img)
-
-            try:
-                font = ImageFont.truetype("DejaVuSans.ttf", 24)
-            except:
-                try:
-                    font = ImageFont.truetype("arial.ttf", 24)
-                except:
-                    font = ImageFont.load_default()
-
-            draw.text((20, 20), "Ошибка рендеринга", fill='red', font=font)
-            draw.text((20, 60), f"Код ошибки: {response.status_code}", fill='black', font=font)
-            draw.text((20, 100), "Проверьте корректность шаблона", fill='black', font=font)
-
-            buffer = BytesIO()
-            img.save(buffer, format='PNG')
-            buffer.seek(0)
-
-            return Response(content=buffer.getvalue(), media_type='image/png')
-
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f'Ошибка рендеринга предпросмотра: {e}')
         raise HTTPException(

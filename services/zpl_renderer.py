@@ -12,6 +12,8 @@ from config import ZEBRASH_BINARY, ZPL_RENDER_DEFAULTS
 
 logger = logging.getLogger(__name__)
 
+from services.zpl_pil_renderer import render_zpl_to_png  # noqa: E402
+
 class ZPLRenderError(Exception):
     """Исключение при ошибке рендеринга ZPL"""
     pass
@@ -141,14 +143,16 @@ async def render_zpl_preview(
         )
     except ZPLRenderError as e:
         logger.warning(f"Рендер через zebrash не удался: {e}")
-        # Фолбэк: пробуем zebrafy
+        # Фолбэк: пробуем zebrafy (только ^GF).
         img = render_zpl_graphic_only(zpl_code)
         if img:
             from io import BytesIO
             buf = BytesIO()
             img.save(buf, format='PNG')
             return buf.getvalue()
-        raise
+        # Фолбэк: локальный рендер на PIL (текст, штрихкоды, DataMatrix).
+        logger.warning("zebrafy не справился — рендер через PIL-интерпретатор")
+        return await asyncio.to_thread(render_zpl_to_png, zpl_code)
 
 
 def _substitute_params(zpl_code: str, params: dict) -> str:

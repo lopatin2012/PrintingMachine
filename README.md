@@ -193,8 +193,17 @@ User ── PrintJob
 
 ## Предпросмотр этикетки
 
-* `POST /templates/preview/render` — онлайн-рендер через Labelary API (даты в формате `YYMMDD`);
-* `POST /templates/preview/render_local` — полностью офлайн: бинарник **zebrash** (или **zebrafy** для графики `^GF`).
+Рендер выполняется цепочкой (`services/preview_renderer.py`), в ответе —
+заголовок `X-Render-Engine` (`labelary` / `zplr` / `pil`):
+
+* `POST /templates/preview/render` — основной предпросмотр (подстановка значений, даты в формате `YYMMDD`). Сначала **Labelary** (внешний HTTP, тот же вид, что и раньше), при его недоступности — локальный **zplr** (через Node-бридж `zplr_preview_server.mjs`, геометрия/графика как у Labelary, кириллица шрифтом `RobotoCondensed-Bold.ttf`), и в последнюю очередь — **Pillow** (`services/zpl_pil_renderer.py`);
+* `POST /templates/preview` — быстрый предпросмотр сырого кода той же цепочкой;
+* `POST /templates/preview/render_local` — **устаревший** маршрут через `render_zpl_preview()` (zebrash → zebrafy → PIL).
+
+> Локальный фолбэк zplr **опционален** — требует Node.js (`node`) и зависимости
+> `zplr`, `skia-canvas` (`npm i` в корне проекта). Если их нет, цепочка тихо
+> переходит на Pillow. `bin/zebrash-renderer` неисполняем (Go-архив `.a`),
+> путь zebrash — мёртвый код.
 
 ---
 

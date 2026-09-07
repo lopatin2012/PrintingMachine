@@ -1,0 +1,13 @@
+{
+  "name": "printing-machine-preview",
+  "private": true,
+  "description": "Опциональный локальный фолбэк рендера превью этикеток через zplr (см. zplr_preview_server.mjs).",
+  "type": "module",
+  "scripts": {
+    "preview": "node zplr_preview_server.mjs"
+  },
+  "dependencies": {
+    "zplr": "^0.3.0",
+    "skia-canvas": "^3.0.8"
+  }
+}
