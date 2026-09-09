@@ -193,7 +193,14 @@ def substitute_placeholders(
     gtin_unit: str = '',
     article: str = '',
     uip_include_batch: bool = True,
-    datamatrix: str = ''
+    datamatrix: str = '',
+    product_name: str = '',
+    name_line1: str = '',
+    name_line2: str = '',
+    tu_number: str = '',
+    weight: str = '',
+    fat_content: str = '',
+    units_count: str = '',
 ) -> str:
     """
     Единая функция подстановки плейсхолдеров — используется и при рендере
@@ -210,6 +217,22 @@ def substitute_placeholders(
         {batch_number}            — номер партии как есть
         {datamatrix}              — код DataMatrix из внешнего сервиса
                                     (для шаблонов с is_print_gtin_unit)
+
+    Плейсхолдеры данных продукта:
+        {product_name}            — полное наименование продукта
+        {product_name_line1}      — строка 1 названия на этикетке
+        {product_name_line2}      — строка 2 названия на этикетке
+        {tu} / {tu_number}        — номер ТУ
+        {weight}                  — вес (масса нетто), напр. "40г"
+        {fat} / {fat_content}     — жирность, напр. "16%"
+        {units_count}             — вложенность (кол-во единиц в упаковке), напр. "6шт"
+
+    Плейсхолдеры GTIN (человекочитаемая разбивка):
+        {gs1_gtin_part1}          — первая группа (страна/префикс)
+        {gs1_gtin_part2}          — вторая группа (код компании)
+        {gs1_gtin_part3}          — третья группа (код товара)
+        Разбивка вычисляется из GTIN автоматически: берётся «короткий» GTIN
+        (gs1_gtin_short = gtin без первой цифры) и делится как 1+6+6.
 
     Плейсхолдеры УИП (DataMatrix, формат GS1):
         {uip_gtin}                — GTIN единицы продукции (14 цифр)
@@ -235,10 +258,30 @@ def substitute_placeholders(
         clean_gtin = gtin.strip()
         zpl_code = zpl_code.replace('{gs1_gtin}', clean_gtin)
         zpl_code = zpl_code.replace('{gs1_gtin_short}', clean_gtin[1:])
+
+        # Человекочитаемая разбивка GTIN: короткий GTIN (13 цифр) как 1+6+6.
+        short_gtin = clean_gtin[1:]
+        zpl_code = zpl_code.replace('{gs1_gtin_part1}', short_gtin[0:1])
+        zpl_code = zpl_code.replace('{gs1_gtin_part2}', short_gtin[1:7])
+        zpl_code = zpl_code.replace('{gs1_gtin_part3}', short_gtin[7:13])
     else:
         # Если GTIN пустой — просто удаляем плейсхолдер
         zpl_code = zpl_code.replace('{gs1_gtin}', '')
         zpl_code = zpl_code.replace('{gs1_gtin_short}', '')
+        zpl_code = zpl_code.replace('{gs1_gtin_part1}', '')
+        zpl_code = zpl_code.replace('{gs1_gtin_part2}', '')
+        zpl_code = zpl_code.replace('{gs1_gtin_part3}', '')
+
+    # ── Данные продукта (плейсхолдеры для этикетки) ──────────────────────────────────
+    zpl_code = zpl_code.replace('{product_name}', product_name or '')
+    zpl_code = zpl_code.replace('{product_name_line1}', name_line1 or '')
+    zpl_code = zpl_code.replace('{product_name_line2}', name_line2 or '')
+    zpl_code = zpl_code.replace('{tu}', tu_number or '')
+    zpl_code = zpl_code.replace('{tu_number}', tu_number or '')
+    zpl_code = zpl_code.replace('{weight}', weight or '')
+    zpl_code = zpl_code.replace('{fat}', fat_content or '')
+    zpl_code = zpl_code.replace('{fat_content}', fat_content or '')
+    zpl_code = zpl_code.replace('{units_count}', units_count or '')
 
     # ── UIP (DataMatrix): GTIN единицы продукции ────────────────────────────────────────
     if gtin_unit and gtin_unit.strip():

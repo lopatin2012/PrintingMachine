@@ -168,6 +168,12 @@ async def product_create(
         gtin_unit: str = Form(None),
         other_codes_1c: str = Form(None),
         date_expiration: int = Form(...),
+        name_line1: str = Form(None),
+        name_line2: str = Form(None),
+        tu_number: str = Form(None),
+        weight: str = Form(None),
+        fat_content: str = Form(None),
+        units_count: str = Form(None),
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_admin)
 ):
@@ -176,6 +182,12 @@ async def product_create(
     article = article.strip()
     gtin = gtin.strip()
     gtin_unit = (gtin_unit or '').strip() or None
+    name_line1 = (name_line1 or '').strip() or None
+    name_line2 = (name_line2 or '').strip() or None
+    tu_number = (tu_number or '').strip() or None
+    weight = (weight or '').strip() or None
+    fat_content = (fat_content or '').strip() or None
+    units_count = (units_count or '').strip() or None
 
     # Валидация наименования
     if len(name) < 2:
@@ -267,7 +279,13 @@ async def product_create(
         gtin=gtin,
         gtin_unit=gtin_unit,
         other_codes_1c=other_codes_1c,
-        date_expiration=date_expiration
+        date_expiration=date_expiration,
+        name_line1=name_line1,
+        name_line2=name_line2,
+        tu_number=tu_number,
+        weight=weight,
+        fat_content=fat_content,
+        units_count=units_count,
     )
     product = await product_crud.create(db, product_data)
 
@@ -291,6 +309,12 @@ async def product_update(
         gtin_unit: str = Form(None),
         other_codes_1c: str = Form(None),
         date_expiration: int = Form(...),
+        name_line1: str = Form(None),
+        name_line2: str = Form(None),
+        tu_number: str = Form(None),
+        weight: str = Form(None),
+        fat_content: str = Form(None),
+        units_count: str = Form(None),
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_admin)
 ):
@@ -307,6 +331,12 @@ async def product_update(
     article = article.strip()
     gtin = gtin.strip()
     gtin_unit = (gtin_unit or '').strip() or None
+    name_line1 = (name_line1 or '').strip() or None
+    name_line2 = (name_line2 or '').strip() or None
+    tu_number = (tu_number or '').strip() or None
+    weight = (weight or '').strip() or None
+    fat_content = (fat_content or '').strip() or None
+    units_count = (units_count or '').strip() or None
 
     # Валидация наименования
     if len(name) < 2:
@@ -407,7 +437,13 @@ async def product_update(
         gtin=gtin,
         gtin_unit=gtin_unit,
         other_codes_1c=other_codes_1c,
-        date_expiration=date_expiration
+        date_expiration=date_expiration,
+        name_line1=name_line1,
+        name_line2=name_line2,
+        tu_number=tu_number,
+        weight=weight,
+        fat_content=fat_content,
+        units_count=units_count,
     )
     updated = await product_crud.update(db, product_id, product_data)
 

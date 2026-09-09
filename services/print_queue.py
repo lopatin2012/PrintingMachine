@@ -78,6 +78,14 @@ class PrintTask:
     gtin: str = ''
     gtin_unit: str = ''
     article: str = ''
+    # Данные продукта для плейсхолдеров этикетки.
+    product_name: str = ''
+    name_line1: str = ''
+    name_line2: str = ''
+    tu_number: str = ''
+    weight: str = ''
+    fat_content: str = ''
+    units_count: str = ''
     printer_type: str = 'zebra'
     # Контроль очереди принтера (настраивается в карточке принтера):
     # buffer_limit — макс. этикеток «в полёте» без подтверждения статуса,
@@ -474,6 +482,13 @@ class PrinterQueue:
                         task.datamatrix_codes[i]
                         if i < len(task.datamatrix_codes) else ''
                     ),
+                    product_name=task.product_name,
+                    name_line1=task.name_line1,
+                    name_line2=task.name_line2,
+                    tu_number=task.tu_number,
+                    weight=task.weight,
+                    fat_content=task.fat_content,
+                    units_count=task.units_count,
                 )
                 label_bytes = box_zpl.encode('utf-8')
                 await asyncio.to_thread(

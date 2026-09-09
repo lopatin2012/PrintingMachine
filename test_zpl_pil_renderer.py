@@ -155,5 +155,77 @@ def test_datamatrix_renders_modules_or_placeholder():
     assert _black_ratio(png, (20, 20, 400, 200)) > 0.01
 
 
+def test_substitute_product_label_placeholders():
+    """Плейсхолдеры данных этикетки (название, ТУ, вес, жирность)."""
+    zpl = (
+        '^XA^PW1100^LL1100'
+        '^FO720,270^A0R,35,35^FD{product_name_line1}^FS'
+        '^FO680,360^A0R,35,35^FD{product_name_line2}^FS'
+        '^FO640,355^A0R,35,35^FD{tu}^FS'
+        '^FO600,300^A0R,30,30^FD{weight} {fat}^FS'
+        '^FO560,300^A0R,30,30^FD{product_name}^FS'
+        '^FO520,300^A0R,30,30^FD{units_count}^FS'
+        '^XZ'
+    )
+    out = substitute_placeholders(
+        zpl,
+        batch_number='01',
+        marking_date=__import__('datetime').date(2026, 3, 5),
+        expiration_date=__import__('datetime').date(2026, 3, 31),
+        current_box=1,
+        gtin='04601751030092',
+        gtin_unit='04601751029416',
+        article='19390',
+        product_name='Сырок творожный глазированный "Премиум" в шоколадной глазури шоколадный',
+        name_line1='Сырок творожный глазированный "Премиум"',
+        name_line2='в шоколадной глазури шоколадный',
+        tu_number='ТУ 10.51.56-042-00426012-2025',
+        weight='40г',
+        fat_content='16%',
+        units_count='6шт',
+    )
+    assert 'Сырок творожный глазированный "Премиум"' in out
+    assert 'в шоколадной глазури шоколадный' in out
+    assert 'ТУ 10.51.56-042-00426012-2025' in out
+    assert '40г 16%' in out
+    assert '6шт' in out
+    assert 'Сырок творожный глазированный "Премиум" в шоколадной глазури шоколадный' in out
+
+
+def test_substitute_gtin_human_readable_parts():
+    """GTIN разбивается на 3 человекочитаемые группы (1+6+6)."""
+    zpl = '^XA^PW1100^LL1100^FO500,305^A@R,40^FD{gs1_gtin_part1}^FS' \
+          '^FO500,460^A@R,40^FD{gs1_gtin_part2}^FS' \
+          '^FO500,640^A@R,40^FD{gs1_gtin_part3}^FS^XZ'
+    out = substitute_placeholders(
+        zpl,
+        batch_number='01',
+        marking_date=__import__('datetime').date(2026, 3, 5),
+        expiration_date=__import__('datetime').date(2026, 3, 31),
+        current_box=1,
+        gtin='04601751030092',
+    )
+    assert '^FD4^FS' in out
+    assert '^FD601751^FS' in out
+    assert '^FD030092^FS' in out
+
+
+def test_substitute_empty_product_fields_remove_placeholders():
+    """Пустые поля продукта — плейсхолдеры удаляются (не остаются в коде)."""
+    zpl = '^XA^PW1100^LL1100^FO720,270^FD{product_name_line1}^FS' \
+          '^FO640,355^FD{tu}^FS^FO500,305^FD{weight}^FS^XZ'
+    out = substitute_placeholders(
+        zpl,
+        batch_number='01',
+        marking_date=__import__('datetime').date(2026, 3, 5),
+        expiration_date=__import__('datetime').date(2026, 3, 31),
+        current_box=1,
+        gtin='04601751030092',
+    )
+    assert '{product_name_line1}' not in out
+    assert '{tu}' not in out
+    assert '{weight}' not in out
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

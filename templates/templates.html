@@ -246,6 +246,13 @@
                                                 data-product-gtin="{{ product.gtin }}"
                                                 data-product-gtin-unit="{{ product.gtin_unit or '' }}"
                                                 data-product-article="{{ product.article }}"
+                                                data-product-name-line1="{{ product.name_line1 or '' }}"
+                                                data-product-name-line2="{{ product.name_line2 or '' }}"
+                                                data-product-tu="{{ product.tu_number or '' }}"
+                                                data-product-weight="{{ product.weight or '' }}"
+                                                data-product-fat="{{ product.fat_content or '' }}"
+                                                data-product-units-count="{{ product.units_count or '' }}"
+                                                data-product-expiration="{{ product.date_expiration }}"
                                                 data-searchable="{{ product.name|lower }} {{ product.article|lower }} {{ product.gtin|lower }} {{ product.gtin_unit|lower if product.gtin_unit else '' }}"
                                                 {% if product.id|string == request.query_params.get('product_id')|string %}selected{% endif %}
                                         >
@@ -301,6 +308,14 @@
                                         <select id="codeLanguage" class="editor-select" onchange="changeLanguage()">
                                             <option value="zpl">ZPL (Zebra)</option>
                                         </select>
+                                        <div class="placeholder-info-wrap">
+                                            <button type="button" class="editor-btn" id="placeholderInfoBtn"
+                                                    onclick="togglePlaceholderInfo()" title="Плейсхолдеры для продукта">ℹ️</button>
+                                            <div class="placeholder-popover hidden" id="placeholderInfoPopover">
+                                                <div class="placeholder-popover-header">ℹ️ Плейсхолдеры для продукта</div>
+                                                <div class="placeholder-popover-body" id="placeholderInfoBody"></div>
+                                            </div>
+                                        </div>
                                     </div>
                                     <textarea id="templateCode" name="print_code" required class="code-editor"
                                               placeholder="Введите код шаблона..." rows="10"></textarea>
@@ -643,6 +658,8 @@ function editTemplate(id, name, productId, productGtin, productGtinUnit, product
 
 function closeTemplateForm() {
     document.getElementById('templateFormModal').classList.add('hidden');
+    // Скрываем панель плейсхолдеров, если она была открыта.
+    document.getElementById('placeholderInfoPopover')?.classList.add('hidden');
     resetFormButton();
 }
 
@@ -1339,6 +1356,160 @@ function setupProductGtinSync() {
 
     productSelect.addEventListener('change', updateGtin);
     updateGtin(); // при открытии формы
+}
+
+// ─── ИНФОРМАЦИЯ О ПЛЕЙСХОЛДЕРАХ ─────────────────────────────────────────────
+
+/** Данные выбранного продукта (из опции select). */
+function getSelectedProductData() {
+    const productSelect = document.getElementById('templateProduct');
+    const option = productSelect?.options[productSelect.selectedIndex];
+    if (!option || !option.value) return null;
+    return {
+        name: option.textContent.split(' (')[0] || '',
+        nameLine1: option.dataset.productNameLine1 || '',
+        nameLine2: option.dataset.productNameLine2 || '',
+        tu: option.dataset.productTu || '',
+        weight: option.dataset.productWeight || '',
+        fat: option.dataset.productFat || '',
+        unitsCount: option.dataset.productUnitsCount || '',
+        gtin: option.dataset.productGtin || '',
+        gtinUnit: option.dataset.productGtinUnit || '',
+        article: option.dataset.productArticle || '',
+        expirationDays: parseInt(option.dataset.productExpiration) || 0,
+    };
+}
+
+function padZeros(n, len) { return String(n).padStart(len, '0'); }
+
+/** Текущие параметры предпросмотра (даты, партия, коробка). */
+function getPreviewParams() {
+    const markingRaw = (document.getElementById('previewMarkingDate')?.value || '').trim();
+    const batch = (document.getElementById('previewBatch')?.value || '01').trim();
+    const box = parseInt(document.getElementById('previewBoxNumber')?.value || '1');
+
+    let yy = '', mm = '', dd = '';
+    const m = markingRaw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) { yy = m[1].slice(-2); mm = m[2]; dd = m[3]; }
+    const yymmdd = `${dd}${mm}${yy}`;
+    const ddmmyy = `${dd}.${mm}.${yy}`;
+    const batchDdMmYy = `${dd}${mm}${yy}`;
+
+    // Срок годности = дата маркировки + срок годности продукта (в днях).
+    const prod = getSelectedProductData();
+    let expDdMmYy = ddmmyy, expYyMmDd = yymmdd;
+    if (m && prod && prod.expirationDays > 0) {
+        const markDt = new Date(`${m[1]}-${m[2]}-${m[3]}T00:00:00`);
+        markDt.setDate(markDt.getDate() + prod.expirationDays);
+        const eD = String(markDt.getDate()).padStart(2, '0');
+        const eM = String(markDt.getMonth() + 1).padStart(2, '0');
+        const eY = String(markDt.getFullYear()).slice(-2);
+        expDdMmYy = `${eD}.${eM}.${eY}`;
+        expYyMmDd = `${eD}${eM}${eY}`;
+    }
+    return { batch, box, yymmdd, ddmmyy, batchDdMmYy, expDdMmYy, expYyMmDd };
+}
+
+function buildPlaceholderRows() {
+    const prod = getSelectedProductData();
+    const p = getPreviewParams();
+    const rows = [];
+
+    const add = (ph, val) => {
+        const display = (val === '' || val == null) ? '—' : val;
+        rows.push(`<div class="ph-row"><code>${ph}</code><span class="ph-val">${escapeHtml(display)}</span></div>`);
+    };
+
+    if (prod) {
+        add('{product_name}', prod.name);
+        add('{product_name_line1}', prod.nameLine1);
+        add('{product_name_line2}', prod.nameLine2);
+        add('{tu}', prod.tu);
+        add('{weight}', prod.weight);
+        add('{fat}', prod.fat);
+        add('{units_count}', prod.unitsCount);
+        add('{gs1_gtin}', prod.gtin);
+        add('{gs1_gtin_short}', prod.gtin ? prod.gtin.slice(1) : '');
+        const s = prod.gtin ? prod.gtin.slice(1) : '';
+        add('{gs1_gtin_part1}', s.slice(0, 1));
+        add('{gs1_gtin_part2}', s.slice(1, 7));
+        add('{gs1_gtin_part3}', s.slice(7, 13));
+        add('{uip_gtin}', prod.gtinUnit);
+        add('{uip_article}', prod.article);
+    }
+
+    // Данные печати (текущие значения предпросмотра)
+    add('{marking_date_str}', p.ddmmyy);
+    add('{expiration_date_str}', p.expDdMmYy);
+    add('{gs1_128_marking_date}', p.yymmdd);
+    add('{gs1_128_expiry_date}', p.expYyMmDd);
+    add('{gs1_128_batch}', p.batchDdMmYy);
+    add('{batch_number}', p.batch);
+    add('{batch_number_str}', `${p.batch}(${p.batchDdMmYy})`);
+    add('{gs1_128_current_box}', padZeros(p.box, 5));
+    add('{current_box}', padZeros(p.box, 5));
+    add('{uip_marking_date}', p.yymmdd);
+    add('{uip_batch}', p.batch);
+    add('{datamatrix}', '');
+    return rows;
+}
+
+function togglePlaceholderInfo() {
+    const pop = document.getElementById('placeholderInfoPopover');
+    const body = document.getElementById('placeholderInfoBody');
+    const btn = document.getElementById('placeholderInfoBtn');
+    if (!pop || !body || !btn) return;
+
+    if (pop.classList.contains('hidden')) {
+        const prod = getSelectedProductData();
+        if (!prod) {
+            body.innerHTML = '<div class="ph-empty">Сначала выберите продукт — плейсхолдеры показываются для выбранного продукта.</div>';
+        } else {
+            body.innerHTML = buildPlaceholderRows().join('');
+        }
+        // Переносим панель в body, чтобы она была поверх всего (модалок и панели кнопок).
+        document.body.appendChild(pop);
+        positionPlaceholderInfo(pop, body, btn);
+        pop.classList.remove('hidden');
+    } else {
+        pop.classList.add('hidden');
+    }
+}
+
+/** Позиционирует панель плейсхолдеров так, чтобы она помещалась в окно. */
+function positionPlaceholderInfo(pop, body, btn) {
+    const rect = btn.getBoundingClientRect();
+    const margin = 8;
+    // Высота шапки + отступы панели (приблизительно, чтобы вписать в окно).
+    const headerH = pop.querySelector('.placeholder-popover-header')?.offsetHeight || 44;
+    const pad = 22;
+    const maxBody = 420;
+    const w = Math.min(540, window.innerWidth - 16);
+
+    let left = rect.right - w;
+    if (left < margin) left = margin;
+    if (left + w > window.innerWidth - margin) left = window.innerWidth - w - margin;
+    pop.style.width = w + 'px';
+    pop.style.left = left + 'px';
+
+    // Сколько места есть под кнопкой и над ней.
+    const spaceBelow = window.innerHeight - rect.bottom - margin;
+    const spaceAbove = rect.top - margin;
+
+    let top, bodyMax;
+    if (spaceBelow >= 220) {
+        bodyMax = Math.min(maxBody, spaceBelow - headerH - pad);
+        top = rect.bottom + margin;
+    } else if (spaceAbove >= 220) {
+        bodyMax = Math.min(maxBody, spaceAbove - headerH - pad);
+        top = rect.top - margin - headerH - bodyMax - pad;
+    } else {
+        bodyMax = Math.min(maxBody, window.innerHeight - margin * 2 - headerH - pad);
+        top = margin;
+    }
+    bodyMax = Math.max(140, bodyMax);
+    body.style.maxHeight = bodyMax + 'px';
+    pop.style.top = top + 'px';
 }
 
 function resetFormButton() {

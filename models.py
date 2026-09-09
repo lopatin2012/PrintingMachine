@@ -137,6 +137,13 @@ class Product(Base):
     gtin_unit = Column(String(50), unique=True, nullable=True, comment='GTIN единицы продукции (для УИП/DataMatrix)')
     other_codes_1c = Column(Text, nullable=True, comment='Другие коды 1C')
     date_expiration = Column(Integer, nullable=False, comment='Срок годности в днях')
+    # ── Данные для печати этикетки (плейсхолдеры в шаблонах) ───────────────────
+    name_line1 = Column(String(200), nullable=True, comment='Название на этикетке, строка 1 ({product_name_line1})')
+    name_line2 = Column(String(200), nullable=True, comment='Название на этикетке, строка 2 ({product_name_line2})')
+    tu_number = Column(String(100), nullable=True, comment='Номер ТУ ({tu})')
+    weight = Column(String(50), nullable=True, comment='Вес (масса нетто), напр. "40г" ({weight})')
+    fat_content = Column(String(50), nullable=True, comment='Жирность, напр. "16%" ({fat})')
+    units_count = Column(String(50), nullable=True, comment='Вложенность (количество единиц в упаковке), напр. "6шт" ({units_count})')
     created_at = Column(MoscowDateTime(), server_default=func.now())
     edited_at = Column(MoscowDateTime(), server_default=func.now(), onupdate=func.now())
 

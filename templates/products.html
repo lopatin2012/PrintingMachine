@@ -190,7 +190,7 @@
                     {% if user and user.role and user.role.is_admin %}
                     <td class="actions-cell">
                         <button class="table-btn edit-btn"
-                                onclick='editProduct({{ product.id|string|tojson|safe }}, {{ product.name|tojson|safe }}, {{ product.article|tojson|safe }}, {{ product.gtin|tojson|safe }}, {{ (product.gtin_unit or "")|tojson|safe }}, {{ product.other_codes_1c|tojson|safe if product.other_codes_1c else "null"|tojson|safe }}, {{ product.date_expiration }})'>
+                                onclick='editProduct({{ product.id|string|tojson|safe }}, {{ product.name|tojson|safe }}, {{ product.article|tojson|safe }}, {{ product.gtin|tojson|safe }}, {{ (product.gtin_unit or "")|tojson|safe }}, {{ product.other_codes_1c|tojson|safe if product.other_codes_1c else "null"|tojson|safe }}, {{ product.date_expiration }}, {{ (product.name_line1 or "")|tojson|safe }}, {{ (product.name_line2 or "")|tojson|safe }}, {{ (product.tu_number or "")|tojson|safe }}, {{ (product.weight or "")|tojson|safe }}, {{ (product.fat_content or "")|tojson|safe }}, {{ (product.units_count or "")|tojson|safe }})'>
                             ✏️ Редактировать
                         </button>
                         <button class="table-btn delete-btn"
@@ -333,6 +333,55 @@
                     </div>
                 </div>
 
+                <div class="form-group">
+                    <label class="form-label">
+                        <span class="label-icon">🏷️</span>
+                        Данные для этикетки (плейсхолдеры)
+                    </label>
+                    <small class="form-hint">Заполняются для подстановки в шаблон этикетки. Если поле пустое — плейсхолдер будет удалён.</small>
+                    <div class="label-data-grid">
+                        <div class="label-data-field">
+                            <label for="productNameLine1">Название на этикетке, строка 1</label>
+                            <input type="text" id="productNameLine1" name="name_line1"
+                                   class="form-input" maxlength="200"
+                                   placeholder="Сырок творожный глазированный &quot;Премиум&quot;">
+                            <small class="form-hint">{product_name_line1}</small>
+                        </div>
+                        <div class="label-data-field">
+                            <label for="productNameLine2">Название на этикетке, строка 2</label>
+                            <input type="text" id="productNameLine2" name="name_line2"
+                                   class="form-input" maxlength="200"
+                                   placeholder="в шоколадной глазури шоколадный">
+                            <small class="form-hint">{product_name_line2}</small>
+                        </div>
+                        <div class="label-data-field">
+                            <label for="productTuNumber">Номер ТУ</label>
+                            <input type="text" id="productTuNumber" name="tu_number"
+                                   class="form-input" maxlength="100"
+                                   placeholder="ТУ 10.51.56-042-00426012-2025">
+                            <small class="form-hint">{tu}</small>
+                        </div>
+                        <div class="label-data-field">
+                            <label for="productWeight">Вес (масса нетто)</label>
+                            <input type="text" id="productWeight" name="weight"
+                                   class="form-input" maxlength="50" placeholder="40г">
+                            <small class="form-hint">{weight}</small>
+                        </div>
+                        <div class="label-data-field">
+                            <label for="productFatContent">Жирность</label>
+                            <input type="text" id="productFatContent" name="fat_content"
+                                   class="form-input" maxlength="50" placeholder="16%">
+                            <small class="form-hint">{fat}</small>
+                        </div>
+                        <div class="label-data-field">
+                            <label for="productUnitsCount">Вложенность (количество единиц)</label>
+                            <input type="text" id="productUnitsCount" name="units_count"
+                                   class="form-input" maxlength="50" placeholder="6шт">
+                            <small class="form-hint">{units_count}</small>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="form-actions">
                     <button type="button" class="btn-secondary" onclick="closeProductForm()">Отмена</button>
                     <button type="submit" class="btn-submit" id="formSubmitBtn">
@@ -379,11 +428,17 @@ function openAddProductForm() {
     document.getElementById('productGtinUnit').value = '';
     document.getElementById('productOtherCodes').value = '';
     document.getElementById('productExpiration').value = '180';
+    document.getElementById('productNameLine1').value = '';
+    document.getElementById('productNameLine2').value = '';
+    document.getElementById('productTuNumber').value = '';
+    document.getElementById('productWeight').value = '';
+    document.getElementById('productFatContent').value = '';
+    document.getElementById('productUnitsCount').value = '';
     document.getElementById('productFormModal').classList.remove('hidden');
 }
 
 // Открыть форму редактирования
-function editProduct(id, name, article, gtin, gtinUnit, otherCodes, expiration) {
+function editProduct(id, name, article, gtin, gtinUnit, otherCodes, expiration, nameLine1, nameLine2, tuNumber, weight, fatContent, unitsCount) {
     document.getElementById('formTitle').textContent = '✏️ Редактировать продукт';
     document.getElementById('formSubmitText').textContent = 'Сохранить изменения';
     document.getElementById('productForm').action = `/products/${id}`;
@@ -394,6 +449,12 @@ function editProduct(id, name, article, gtin, gtinUnit, otherCodes, expiration) 
     document.getElementById('productGtinUnit').value = gtinUnit ? gtinUnit.trim() : '';
     document.getElementById('productOtherCodes').value = otherCodes && otherCodes !== 'null' ? otherCodes.trim() : '';
     document.getElementById('productExpiration').value = expiration;
+    document.getElementById('productNameLine1').value = nameLine1 && nameLine1 !== 'null' ? nameLine1 : '';
+    document.getElementById('productNameLine2').value = nameLine2 && nameLine2 !== 'null' ? nameLine2 : '';
+    document.getElementById('productTuNumber').value = tuNumber && tuNumber !== 'null' ? tuNumber : '';
+    document.getElementById('productWeight').value = weight && weight !== 'null' ? weight : '';
+    document.getElementById('productFatContent').value = fatContent && fatContent !== 'null' ? fatContent : '';
+    document.getElementById('productUnitsCount').value = unitsCount && unitsCount !== 'null' ? unitsCount : '';
     document.getElementById('productFormModal').classList.remove('hidden');
     document.getElementById('productName').focus();
 }

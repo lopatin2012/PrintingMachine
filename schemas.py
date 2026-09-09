@@ -236,6 +236,12 @@ class ProductBase(BaseModel):
     gtin_unit: Optional[str] = Field(None, max_length=50, description='GTIN единицы продукции (для УИП/DataMatrix)')
     other_codes_1c: Optional[str] = Field(None, description='Другие коды 1C')
     date_expiration: int = Field(..., ge=0, description='Срок годности в днях')
+    name_line1: Optional[str] = Field(None, max_length=200, description='Название на этикетке, строка 1 ({product_name_line1})')
+    name_line2: Optional[str] = Field(None, max_length=200, description='Название на этикетке, строка 2 ({product_name_line2})')
+    tu_number: Optional[str] = Field(None, max_length=100, description='Номер ТУ ({tu})')
+    weight: Optional[str] = Field(None, max_length=50, description='Вес (масса нетто), напр. "40г" ({weight})')
+    fat_content: Optional[str] = Field(None, max_length=50, description='Жирность, напр. "16%" ({fat})')
+    units_count: Optional[str] = Field(None, max_length=50, description='Вложенность (количество единиц в упаковке), напр. "6шт" ({units_count})')
 
 class ProductCreate(ProductBase):
     """Создание продукта"""
@@ -250,6 +256,12 @@ class ProductUpdate(BaseModel):
     gtin_unit: Optional[str] = Field(None, max_length=50, description='GTIN единицы продукции (для УИП/DataMatrix)')
     other_codes_1c: Optional[str] = Field(None, description='Другие коды 1C')
     date_expiration: Optional[int] = Field(None, ge=0, description='Срок годности в днях')
+    name_line1: Optional[str] = Field(None, max_length=200, description='Название на этикетке, строка 1 ({product_name_line1})')
+    name_line2: Optional[str] = Field(None, max_length=200, description='Название на этикетке, строка 2 ({product_name_line2})')
+    tu_number: Optional[str] = Field(None, max_length=100, description='Номер ТУ ({tu})')
+    weight: Optional[str] = Field(None, max_length=50, description='Вес (масса нетто), напр. "40г" ({weight})')
+    fat_content: Optional[str] = Field(None, max_length=50, description='Жирность, напр. "16%" ({fat})')
+    units_count: Optional[str] = Field(None, max_length=50, description='Вложенность (количество единиц в упаковке), напр. "6шт" ({units_count})')
 
 class ProductInDBBase(ProductBase):
     """Схема продукта из БД"""

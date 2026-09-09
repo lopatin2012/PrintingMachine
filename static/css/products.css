@@ -364,3 +364,33 @@
         justify-content: center;
     }
 }
+
+/* ─── Данные для этикетки (плейсхолдеры) ─── */
+.label-data-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    margin-top: 8px;
+}
+
+.label-data-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.label-data-field label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.label-data-field .form-hint {
+    color: var(--primary);
+    font-family: monospace;
+    font-size: 12px;
+}
+
+@media (max-width: 640px) {
+    .label-data-grid { grid-template-columns: 1fr; }
+}

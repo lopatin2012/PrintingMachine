@@ -248,6 +248,13 @@ async def start_printing(
         gtin=gtin,
         gtin_unit=gtin_unit.strip(),
         article=article.strip(),
+        product_name=product.name,
+        name_line1=(product.name_line1 or ''),
+        name_line2=(product.name_line2 or ''),
+        tu_number=(product.tu_number or ''),
+        weight=(product.weight or ''),
+        fat_content=(product.fat_content or ''),
+        units_count=(product.units_count or ''),
         uip_include_batch=bool(template.uip_include_batch),
         datamatrix_codes=datamatrix_codes,
     )

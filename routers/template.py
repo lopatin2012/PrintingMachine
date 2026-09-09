@@ -587,6 +587,7 @@ async def render_template_preview(
         #    приоритет 2 — срок годности продукта из БД (marking + product.date_expiration);
         #    приоритет 3 — срок годности в днях из формы (date_expiration);
         #    если ничего нет — +7 дней (для предпросмотра).
+        product = None
         ed = (expiration_date or '').strip()[:6]
         expiration_dt = None
         if len(ed) == 6:
@@ -622,6 +623,13 @@ async def render_template_preview(
             gtin_unit=gtin_unit,
             article=article,
             uip_include_batch=uip_include_batch,
+            product_name=product.name if product is not None else '',
+            name_line1=(product.name_line1 if product is not None else '') or '',
+            name_line2=(product.name_line2 if product is not None else '') or '',
+            tu_number=(product.tu_number if product is not None else '') or '',
+            weight=(product.weight if product is not None else '') or '',
+            fat_content=(product.fat_content if product is not None else '') or '',
+            units_count=(product.units_count if product is not None else '') or '',
         )
 
         # Добавляем ^XZ если отсутствует (обязательная команда завершения этикетки ZPL)
