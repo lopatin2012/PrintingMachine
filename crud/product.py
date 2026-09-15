@@ -29,3 +29,12 @@ class ProductCRUD(BaseCRUD[Product, ProductCreate, ProductUpdate]):
         )
 
         return result.scalar_one_or_none()
+
+    async def get_by_gtin_unit(self, db: AsyncSession, gtin_unit: str) -> Product | None:
+        """Получить продукт по GTIN единицы продукции"""
+        result = await db.execute(
+            select(self.model)
+            .where(func.lower(self.model.gtin_unit) == func.lower(gtin_unit))
+        )
+
+        return result.scalar_one_or_none()

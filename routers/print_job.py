@@ -655,33 +655,23 @@ async def get_templates_for_product(
         ]
     }
 
-@router.get('/api/printing/zpl')
-async def get_zpl_by_gtin(
-        gtin: str = Query(..., description='GTIN групповой упаковки'),
-        batch_number: str = Query('01', description='Номер партии'),
-        marking_date: Optional[date] = Query(None, description='Дата маркировки (YYYY-MM-DD), по умолчанию — сегодня'),
-        first_box: int = Query(1, ge=1, description='Номер первой коробки'),
-        printer_id: Optional[UUID] = Query(
-            None, description='id принтера, если у продукта несколько активных шаблонов'
-        ),
-        db: AsyncSession = Depends(get_db),
-):
-    """ZPL-код активного шаблона по GTIN групповой упаковки (публичный API).
+async def _build_zpl_response(
+        db: AsyncSession,
+        product: Product,
+        *,
+        batch_number: str,
+        marking_date: Optional[date],
+        first_box: int,
+        printer_id: Optional[UUID],
+) -> dict:
+    """Сборка ответа с ZPL активного шаблона продукта.
 
-    Данные, которые есть в продукте (GTIN, GTIN единицы, артикул, срок
-    годности), подставляются из БД. Данные, которых в продукте нет (партия,
-    дата маркировки, номер коробки), передаются query-параметрами. Дата
-    окончания срока годности вычисляется как дата маркировки + срок годности
-    продукта. Партия (по умолчанию '01') и дата маркировки (по умолчанию —
-    сегодня) необязательны. Авторизация не требуется — метод рассчитан на
-    внешнюю интеграцию.
+    Общая логика для отдачи ZPL по групповому GTIN и по GTIN единицы
+    продукции: ищет активный шаблон продукта (опционально — на конкретном
+    принтере), подставляет данные продукта и query-параметры.
     """
     if marking_date is None:
         marking_date = date.today()
-
-    product = await product_crud.get_by_gtin(db, gtin)
-    if not product:
-        raise HTTPException(status_code=404, detail='Продукт с таким GTIN не найден')
 
     template_query = select(CodeTemplate).where(
         CodeTemplate.product_id == product.id,
@@ -708,12 +698,13 @@ async def get_zpl_by_gtin(
     )
 
     logger.info(
-        'Выдан ZPL по GTIN %s: продукт=%s, шаблон=%s, партия=%s, коробка=%d',
-        product.gtin, product.name, template.name, batch_number, first_box,
+        'Выдан ZPL: продукт=%s, шаблон=%s, партия=%s, коробка=%d',
+        product.name, template.name, batch_number, first_box,
     )
 
     return {
         'gtin': product.gtin,
+        'gtin_unit': product.gtin_unit,
         'product_id': str(product.id),
         'product_name': product.name,
         'template_id': str(template.id),
@@ -724,6 +715,72 @@ async def get_zpl_by_gtin(
         'expiration_date': expiration_date.isoformat(),
         'zpl_code': zpl_code,
     }
+
+
+@router.get('/api/printing/zpl')
+async def get_zpl_by_gtin(
+        gtin: str = Query(..., description='GTIN групповой упаковки'),
+        batch_number: str = Query('01', description='Номер партии'),
+        marking_date: Optional[date] = Query(None, description='Дата маркировки (YYYY-MM-DD), по умолчанию — сегодня'),
+        first_box: int = Query(1, ge=1, description='Номер первой коробки'),
+        printer_id: Optional[UUID] = Query(
+            None, description='id принтера, если у продукта несколько активных шаблонов'
+        ),
+        db: AsyncSession = Depends(get_db),
+):
+    """ZPL-код активного шаблона по GTIN групповой упаковки (публичный API).
+
+    Данные, которые есть в продукте (GTIN, GTIN единицы, артикул, срок
+    годности), подставляются из БД. Данные, которых в продукте нет (партия,
+    дата маркировки, номер коробки), передаются query-параметрами. Дата
+    окончания срока годности вычисляется как дата маркировки + срок годности
+    продукта. Партия (по умолчанию '01') и дата маркировки (по умолчанию —
+    сегодня) необязательны. Авторизация не требуется — метод рассчитан на
+    внешнюю интеграцию.
+    """
+    product = await product_crud.get_by_gtin(db, gtin)
+    if not product:
+        raise HTTPException(status_code=404, detail='Продукт с таким GTIN не найден')
+
+    return await _build_zpl_response(
+        db, product,
+        batch_number=batch_number,
+        marking_date=marking_date,
+        first_box=first_box,
+        printer_id=printer_id,
+    )
+
+
+@router.get('/api/printing/zpl-unit')
+async def get_zpl_by_gtin_unit(
+        gtin_unit: str = Query(..., description='GTIN единицы продукции'),
+        batch_number: str = Query('01', description='Номер партии'),
+        marking_date: Optional[date] = Query(None, description='Дата маркировки (YYYY-MM-DD), по умолчанию — сегодня'),
+        first_box: int = Query(1, ge=1, description='Номер первой коробки'),
+        printer_id: Optional[UUID] = Query(
+            None, description='id принтера, если у продукта несколько активных шаблонов'
+        ),
+        db: AsyncSession = Depends(get_db),
+):
+    """ZPL-код активного шаблона по GTIN единицы продукции (публичный API).
+
+    Полный аналог `/api/printing/zpl`, но продукт ищется по GTIN единицы
+    продукции (`products.gtin_unit`) — для этикеток потребительской упаковки
+    (УИП/DataMatrix). Остальные правила подстановки те же: данные продукта —
+    из БД, партия/дата маркировки/номер коробки — query-параметрами, срок
+    годности вычисляется автоматически.
+    """
+    product = await product_crud.get_by_gtin_unit(db, gtin_unit)
+    if not product:
+        raise HTTPException(status_code=404, detail='Продукт с таким GTIN единицы продукции не найден')
+
+    return await _build_zpl_response(
+        db, product,
+        batch_number=batch_number,
+        marking_date=marking_date,
+        first_box=first_box,
+        printer_id=printer_id,
+    )
 
 
 __all__ = ['router']
