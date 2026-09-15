@@ -3,7 +3,7 @@
 import asyncio
 import socket
 import time
-from datetime import date
+from datetime import date, timedelta
 import logging
 import re
 
@@ -314,6 +314,41 @@ def substitute_placeholders(
         zpl_code = zpl_code.strip() + '\n^XZ'
 
     return zpl_code
+
+def build_product_zpl(
+    zpl_code: str,
+    *,
+    product,
+    batch_number: str,
+    marking_date: date,
+    current_box: int = 1,
+    uip_include_batch: bool = True,
+    datamatrix: str = '',
+) -> str:
+    """Сборка готового ZPL по шаблону и продукту.
+
+    Данные, которые есть в продукте (GTIN групповой упаковки, GTIN единицы,
+    артикул, срок годности), берутся из `product`; недостающие (партия, дата
+    маркировки, номер коробки) передаются параметрами. Дата окончания срока
+    годности вычисляется как marking_date + product.date_expiration — вручную
+    не задаётся.
+
+    Используется публичным API отдачи ZPL по GTIN групповой упаковки.
+    """
+    expiration_date = marking_date + timedelta(days=product.date_expiration or 0)
+    return substitute_placeholders(
+        zpl_code,
+        batch_number=batch_number,
+        marking_date=marking_date,
+        expiration_date=expiration_date,
+        current_box=current_box,
+        gtin=product.gtin or '',
+        gtin_unit=product.gtin_unit or '',
+        article=product.article or '',
+        uip_include_batch=uip_include_batch,
+        datamatrix=datamatrix,
+    )
+
 
 def str_to_zpl_hex(text: str, encoding: str = 'UTF-8') -> str:
     """Преобразование строки в побайтовую HEX-строку для ZPL."""

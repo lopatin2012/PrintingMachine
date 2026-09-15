@@ -23,6 +23,7 @@ from models import User, Workshop, Line, PrintJob, WorkshopUser, Product, Printe
 from services.print_queue import PrintTask
 from services.datamatrix_service import DatamatrixServiceError, fetch_datamatrix_codes
 from helpers.printer_drivers import printer_type_label
+from helpers.printers import build_product_zpl
 
 from templates_config import templates
 from security import get_current_user
@@ -653,5 +654,76 @@ async def get_templates_for_product(
             for t in templates
         ]
     }
+
+@router.get('/api/printing/zpl')
+async def get_zpl_by_gtin(
+        gtin: str = Query(..., description='GTIN групповой упаковки'),
+        batch_number: str = Query('01', description='Номер партии'),
+        marking_date: Optional[date] = Query(None, description='Дата маркировки (YYYY-MM-DD), по умолчанию — сегодня'),
+        first_box: int = Query(1, ge=1, description='Номер первой коробки'),
+        printer_id: Optional[UUID] = Query(
+            None, description='id принтера, если у продукта несколько активных шаблонов'
+        ),
+        db: AsyncSession = Depends(get_db),
+):
+    """ZPL-код активного шаблона по GTIN групповой упаковки (публичный API).
+
+    Данные, которые есть в продукте (GTIN, GTIN единицы, артикул, срок
+    годности), подставляются из БД. Данные, которых в продукте нет (партия,
+    дата маркировки, номер коробки), передаются query-параметрами. Дата
+    окончания срока годности вычисляется как дата маркировки + срок годности
+    продукта. Партия (по умолчанию '01') и дата маркировки (по умолчанию —
+    сегодня) необязательны. Авторизация не требуется — метод рассчитан на
+    внешнюю интеграцию.
+    """
+    if marking_date is None:
+        marking_date = date.today()
+
+    product = await product_crud.get_by_gtin(db, gtin)
+    if not product:
+        raise HTTPException(status_code=404, detail='Продукт с таким GTIN не найден')
+
+    template_query = select(CodeTemplate).where(
+        CodeTemplate.product_id == product.id,
+        CodeTemplate.is_active == True,
+    )
+    if printer_id:
+        template_query = template_query.where(CodeTemplate.printer_id == printer_id)
+
+    template = (await db.execute(
+        template_query.order_by(desc(CodeTemplate.created_at)).limit(1)
+    )).scalar_one_or_none()
+    if not template:
+        raise HTTPException(status_code=404, detail='Активный шаблон для продукта не найден')
+
+    expiration_date = marking_date + timedelta(days=product.date_expiration or 0)
+
+    zpl_code = build_product_zpl(
+        template.print_code,
+        product=product,
+        batch_number=batch_number.strip(),
+        marking_date=marking_date,
+        current_box=first_box,
+        uip_include_batch=bool(template.uip_include_batch),
+    )
+
+    logger.info(
+        'Выдан ZPL по GTIN %s: продукт=%s, шаблон=%s, партия=%s, коробка=%d',
+        product.gtin, product.name, template.name, batch_number, first_box,
+    )
+
+    return {
+        'gtin': product.gtin,
+        'product_id': str(product.id),
+        'product_name': product.name,
+        'template_id': str(template.id),
+        'template_name': template.name,
+        'printer_id': str(template.printer_id),
+        'batch_number': batch_number.strip(),
+        'marking_date': marking_date.isoformat(),
+        'expiration_date': expiration_date.isoformat(),
+        'zpl_code': zpl_code,
+    }
+
 
 __all__ = ['router']
