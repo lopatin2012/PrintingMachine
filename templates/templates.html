@@ -338,7 +338,7 @@
                                     <input type="checkbox" id="templateIsPrintGtinUnit" name="is_print_gtin_unit" value="true">
                                     <span>Печатать DataMatrix-коды из внешнего сервиса</span>
                                 </label>
-                                <small class="form-hint">При печати запрашивается список кодов DataMatrix у внешнего сервиса (плейсхолдер {datamatrix} в шаблоне); если коды не получены — печать отменяется с ошибкой</small>
+                                <small class="form-hint">При печати запрашивается список кодов DataMatrix (плейсхолдер {datamatrix} в шаблоне). Если у продукта задан «UUID во внешнем сервисе кодов» — коды берутся по нему, иначе по артикулу/партии. Если коды не получены — печать отменяется с предупреждением</small>
                             </div>
                         </div>
 

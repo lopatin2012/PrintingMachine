@@ -135,6 +135,7 @@ class Product(Base):
     name = Column(String(200), nullable=False, comment='Наименование')
     gtin = Column(String(50), unique=True, nullable=False, comment='GTIN групповой упаковки')
     gtin_unit = Column(String(50), unique=True, nullable=True, comment='GTIN единицы продукции (для УИП/DataMatrix)')
+    external_uuid = Column(String(64), nullable=True, comment='UUID продукта во внешнем сервисе кодов (get_codes_by_product)')
     other_codes_1c = Column(Text, nullable=True, comment='Другие коды 1C')
     date_expiration = Column(Integer, nullable=False, comment='Срок годности в днях')
     # ── Данные для печати этикетки (плейсхолдеры в шаблонах) ───────────────────

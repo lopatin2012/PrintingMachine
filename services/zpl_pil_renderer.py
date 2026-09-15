@@ -27,37 +27,19 @@ from __future__ import annotations
 import io
 import logging
 import os
-import sys
 
 from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger(__name__)
 
-# pylibdmtx 0.1.x использует distutils, удалённый в Python 3.12+ —
-# подключаем совместимый модуль из setuptools до импорта pylibdmtx.
-try:
-    import distutils.version  # noqa: F401
-except ImportError:  # Python >= 3.12
-    try:
-        from setuptools import _distutils
-        import setuptools._distutils.version as _distutils_version
-
-        sys.modules.setdefault('distutils', _distutils)
-        sys.modules.setdefault('distutils.version', _distutils_version)
-    except Exception:  # pragma: no cover - без setuptools DataMatrix не рендерится
-        logger.warning('setuptools недоступен — DataMatrix будет плейсхолдером')
-
 from barcode.codex import Code128, Gs1_128  # noqa: E402
 from barcode.charsets import code128 as _code128  # noqa: E402
 
-try:  # pragma: no cover - наличие pylibdmtx проверяется один раз
-    from pylibdmtx.pylibdmtx import encode as _dmtx_encode
+# Собственный движок DataMatrix ECC200 (кодирование + модули) — без
+# pylibdmtx/libdmtx и внешних сервисов.
+from services.datamatrix_renderer import DataMatrixError, build_matrix  # noqa: E402
 
-    HAS_DMTX = True
-except Exception:  # pragma: no cover
-    _dmtx_encode = None
-    HAS_DMTX = False
-    logger.warning('pylibdmtx недоступен — DataMatrix будет плейсхолдером')
+HAS_DMTX = True  # собственный движок доступен всегда
 
 DEFAULT_DPMM = 8  # 203 dpi
 DEFAULT_WIDTH_MM = 101.6
@@ -581,19 +563,36 @@ class _ZplRenderer:
         self.image.paste(tmp, (int(x), int(y)), tmp)
 
     @staticmethod
-    def _detect_module_px(img: Image.Image) -> int:
-        """Размер модуля DataMatrix в пикселях (по верхней чередующейся рамке)."""
-        row = [img.getpixel((x, 0)) for x in range(img.width)]
-        runs = []
-        cur, n = row[0], 1
-        for v in row[1:]:
-            if v == cur:
-                n += 1
-            else:
-                runs.append(n)
-                cur, n = v, 1
-        runs.append(n)
-        return min(runs)
+    def _render_datamatrix_image(data: str, cell_px: int) -> Image.Image | None:
+        """Отрисовать DataMatrix собственным движком (ECC200).
+
+        Возвращает RGBA-изображение с квадратными модулями `cell_px` пикселей
+        или None, если закодировать не удалось.
+        """
+        try:
+            payload = data.encode('utf-8')
+            matrix = build_matrix(payload, gs_as_fnc1=False)
+        except (DataMatrixError, UnicodeEncodeError, ValueError) as e:
+            logger.warning('DataMatrix не закодирован (%s) — плейсхолдер', e)
+            return None
+        except Exception as e:  # noqa: BLE001
+            logger.warning('DataMatrix: непредвиденная ошибка (%s) — плейсхолдер', e)
+            return None
+
+        n = len(matrix)
+        side = n * cell_px
+        img = Image.new('RGBA', (side, side), (255, 255, 255, 0))
+        draw = ImageDraw.Draw(img)
+        for y, row_bits in enumerate(matrix):
+            y0 = y * cell_px
+            for x, black in enumerate(row_bits):
+                if black:
+                    x0 = x * cell_px
+                    draw.rectangle(
+                        [x0, y0, x0 + cell_px - 1, y0 + cell_px - 1],
+                        fill='black',
+                    )
+        return img
 
     def _draw_datamatrix(self, orient: str, rest: list[str], data: str) -> None:
         cell_dots = _parse_int(rest[0], 6) if rest else 6
@@ -601,26 +600,7 @@ class _ZplRenderer:
             cell_dots = 6
         cell_px = max(1, int(cell_dots * self.scale))
 
-        tmp = None
-        if HAS_DMTX and data:
-            try:
-                enc = _dmtx_encode(data)
-                raw = Image.frombytes(
-                    'RGB', (enc.width, enc.height), enc.pixels
-                ).convert('L')
-                # getbbox в режиме 'L' считает фоном 0 (чёрный) — инвертируем,
-                # чтобы получить рамку именно штрихкода.
-                black_bbox = raw.point(lambda p: 255 - p).getbbox()
-                if black_bbox:
-                    raw = raw.crop(black_bbox)
-                module = self._detect_module_px(raw)
-                w_mods = max(1, raw.width // module) if module else raw.width
-                h_mods = max(1, raw.height // module) if module else raw.height
-                tmp = raw.resize(
-                    (w_mods * cell_px, h_mods * cell_px), Image.NEAREST
-                ).convert('RGBA')
-            except Exception as e:
-                logger.warning('DataMatrix не закодирован (%s) — плейсхолдер', e)
+        tmp = self._render_datamatrix_image(data, cell_px) if data else None
 
         if tmp is None:
             # Плейсхолдер: квадрат с подписью.

@@ -114,7 +114,16 @@ def detect_schema_revision(cur) -> str:
     if 'printers' not in tables:
         return 'bfd9a6d5bfd3'
 
-    # head: печать DataMatrix-кодов из внешнего сервиса (is_print_gtin_unit).
+    # head: UUID продукта во внешнем сервисе кодов (external_uuid).
+    if has_column(cur, 'products', 'external_uuid'):
+        return 'b1c2d3e4f5a6'
+    # head: вложенность единиц в упаковке (units_count).
+    if has_column(cur, 'products', 'units_count'):
+        return '5d00e674e5de'
+    # head: поля этикетки продукта (name_line1/name_line2/tu_number/weight/fat_content).
+    if has_column(cur, 'products', 'name_line1'):
+        return '1db2cacdf78a'
+    # печать DataMatrix-кодов из внешнего сервиса (is_print_gtin_unit).
     if has_column(cur, 'code_templates', 'is_print_gtin_unit'):
         return 'a7b8c9d0e1f2'
     # head: партия в УИП выключена по умолчанию (server_default = false).

@@ -1,13 +1,15 @@
 # routers/print_job.py
 
+import asyncio
 import logging
+import re
 from datetime import date, timedelta
 from typing import Optional
 from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, Request, Depends, HTTPException, status, Form, Query
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, func
 from sqlalchemy.orm import selectinload
@@ -21,7 +23,12 @@ from crud.code_template import CodeTemplateCRUD
 from schemas import PrintJobCreate
 from models import User, Workshop, Line, PrintJob, WorkshopUser, Product, Printer, CodeTemplate
 from services.print_queue import PrintTask
-from services.datamatrix_service import DatamatrixServiceError, fetch_datamatrix_codes
+from services.datamatrix_service import (
+    DatamatrixServiceError,
+    fetch_codes_by_product_uuid,
+    fetch_datamatrix_codes,
+)
+from services.pdf_renderer import build_labels_for_boxes, render_labels_to_pdf
 from helpers.printer_drivers import printer_type_label
 
 from templates_config import templates
@@ -34,6 +41,19 @@ workshop_user_crud = WorkshopUserCRUD()
 product_crud = ProductCRUD()
 printer_crud = PrinterCRUD()
 template_crud = CodeTemplateCRUD()
+
+# Спецзначение «принтера»: вместо печати сформировать PDF и скачать его.
+PDF_OUTPUT_VALUE = '__pdf__'
+
+
+def _pdf_filename(article: str, batch_number: str, first_box: int, last_box: int) -> str:
+    """Безопасное имя файла PDF (только ASCII-символы)."""
+    def _safe(value) -> str:
+        cleaned = re.sub(r'[^A-Za-z0-9._-]+', '_', str(value or '')).strip('._-')
+        return cleaned or 'x'
+
+    return f'labels_{_safe(article)}_{_safe(batch_number)}_{first_box}-{last_box}.pdf'
+
 
 # ─── ЭНДПОИНТЫ ───────────────────────────────────────────────────────────────
 
@@ -110,7 +130,7 @@ async def start_printing(
         request: Request,
         product_id: UUID = Form(...),
         template_id: UUID = Form(...),
-        printer_id: UUID = Form(...),
+        printer_id: str = Form(...),
         batch_number: str = Form(...),
         marking_date: date = Form(...),
         first_box: int = Form(...),
@@ -121,7 +141,13 @@ async def start_printing(
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_user),
 ):
-    """Запуск реальной печати этикеток."""
+    """Запуск печати этикеток или выгрузка PDF вместо принтера.
+
+    Если вместо принтера выбран вариант «Сохранить в PDF»
+    (`printer_id == '__pdf__'`), задание на печать не создаётся: все этикетки
+    (по одной на коробку, с кодами) рендерятся в многостраничный PDF, который
+    сразу скачивается. Иначе — обычная постановка задания в очередь.
+    """
     if first_box > last_box:
         raise HTTPException(status_code=400, detail="Номер первой коробки не может быть больше последней")
 
@@ -129,7 +155,9 @@ async def start_printing(
     if not product:
         raise HTTPException(status_code=404, detail="Продукт не найден")
 
-    # Проверяем доступ пользователя к запрошенному принтеру
+    is_pdf = printer_id == PDF_OUTPUT_VALUE
+
+    # Проверяем доступ пользователя к цехам (общий для печати и PDF).
     workshop_access = await db.execute(
         select(WorkshopUser).where(
             WorkshopUser.user_id == current_user.id,
@@ -143,30 +171,36 @@ async def start_printing(
     workshop_ids = [wu.workshop_id for wu in user_workshops]
     line_ids = [wu.line_id for wu in user_workshops if wu.line_id]
 
-    # Проверяем, есть ли у пользователя доступ «Все цеха»
-    workshops_result = await db.execute(
-        select(Workshop).where(Workshop.id.in_(workshop_ids))
-    )
-    workshops = workshops_result.scalars().all()
-    has_all_workshops = any(w.name == 'Все цеха' for w in workshops)
+    # Принтер нужен только для реальной печати — для PDF проверку пропускаем.
+    printer = None
+    if not is_pdf:
+        try:
+            printer_uuid = UUID(printer_id)
+        except (ValueError, AttributeError, TypeError):
+            raise HTTPException(status_code=400, detail="Некорректный идентификатор принтера")
 
-    # Проверяем, что выбранный принтер доступен пользователю
-    printer_access_query = (
-        select(Printer)
-        .join(Line, Printer.line_id == Line.id)
-        .where(Printer.id == printer_id)
-    )
-    if not has_all_workshops:
-        if line_ids:
-            printer_access_query = printer_access_query.where(Line.id.in_(line_ids))
-        else:
-            printer_access_query = printer_access_query.where(Line.workshop_id.in_(workshop_ids))
+        workshops_result = await db.execute(
+            select(Workshop).where(Workshop.id.in_(workshop_ids))
+        )
+        workshops = workshops_result.scalars().all()
+        has_all_workshops = any(w.name == 'Все цеха' for w in workshops)
 
-    printer = (await db.execute(printer_access_query)).scalar_one_or_none()
-    if not printer:
-        raise HTTPException(status_code=403, detail="Принтер недоступен или не найден")
+        printer_access_query = (
+            select(Printer)
+            .join(Line, Printer.line_id == Line.id)
+            .where(Printer.id == printer_uuid)
+        )
+        if not has_all_workshops:
+            if line_ids:
+                printer_access_query = printer_access_query.where(Line.id.in_(line_ids))
+            else:
+                printer_access_query = printer_access_query.where(Line.workshop_id.in_(workshop_ids))
 
-    # Ищем шаблон для выбранного принтера и продукта.
+        printer = (await db.execute(printer_access_query)).scalar_one_or_none()
+        if not printer:
+            raise HTTPException(status_code=403, detail="Принтер недоступен или не найден")
+
+    # Ищем шаблон для выбранного продукта.
     template = await template_crud.get(db, template_id)
     if not template:
         raise HTTPException(status_code=404, detail="Выбранный шаблон не найден")
@@ -180,20 +214,32 @@ async def start_printing(
 
     # ── DataMatrix из внешнего сервиса ────────────────────────────────────────
     # Если в шаблоне включён флаг is_print_gtin_unit — запрашиваем список кодов
-    # DataMatrix для партии. Кодов нет или их меньше, чем коробок — печать
-    # отменяется с сообщением об ошибке.
+    # DataMatrix. Приоритетный источник — внешний сервис кодов по UUID продукта
+    # (Product.external_uuid); если UUID не задан — старый POST-протокол по
+    # артикулу/GTIN/партии. Кодов нет или их меньше, чем коробок — действие
+    # отменяется с предупреждением.
     datamatrix_codes: list = []
     if template.is_print_gtin_unit:
         try:
-            datamatrix_codes = await fetch_datamatrix_codes(
-                product_article=product.article,
-                gtin_unit=product.gtin_unit or '',
-                batch_number=batch_number.strip(),
-                marking_date=marking_date,
-                first_box=first_box,
-                last_box=last_box,
-                boxes_count=boxes_count,
-            )
+            if (product.external_uuid or '').strip():
+                datamatrix_codes = await fetch_codes_by_product_uuid(
+                    external_uuid=product.external_uuid,
+                    count=boxes_count,
+                )
+            else:
+                logger.warning(
+                    'У продукта "%s" не задан UUID внешнего сервиса кодов — '
+                    'использую резервный POST-протокол', product.name,
+                )
+                datamatrix_codes = await fetch_datamatrix_codes(
+                    product_article=product.article,
+                    gtin_unit=product.gtin_unit or '',
+                    batch_number=batch_number.strip(),
+                    marking_date=marking_date,
+                    first_box=first_box,
+                    last_box=last_box,
+                    boxes_count=boxes_count,
+                )
         except DatamatrixServiceError as e:
             logger.warning('Печать отменена (%s): %s', current_user.login, e)
             return RedirectResponse(
@@ -202,7 +248,7 @@ async def start_printing(
             )
         if len(datamatrix_codes) < boxes_count:
             msg = (
-                f'Сервис DataMatrix вернул {len(datamatrix_codes)} кодов, '
+                f'Сервис кодов вернул {len(datamatrix_codes)} кодов, '
                 f'требуется {boxes_count} — печать отменена'
             )
             logger.warning('Печать отменена (%s): %s', current_user.login, msg)
@@ -215,10 +261,61 @@ async def start_printing(
             template.name, len(datamatrix_codes), batch_number,
         )
 
+    # ── Вариант «Сохранить в PDF» ─────────────────────────────────────────────
+    if is_pdf:
+        labels = build_labels_for_boxes(
+            template_code=template.print_code,
+            boxes_count=boxes_count,
+            first_box=first_box,
+            batch_number=batch_number.strip(),
+            marking_date=marking_date,
+            expiration_date=expiration_date,
+            gtin=gtin,
+            gtin_unit=gtin_unit.strip(),
+            article=article.strip(),
+            uip_include_batch=bool(template.uip_include_batch),
+            product_name=product.name,
+            name_line1=(product.name_line1 or ''),
+            name_line2=(product.name_line2 or ''),
+            tu_number=(product.tu_number or ''),
+            weight=(product.weight or ''),
+            fat_content=(product.fat_content or ''),
+            units_count=(product.units_count or ''),
+            datamatrix_codes=datamatrix_codes,
+        )
+
+        try:
+            pdf_bytes, engine = await asyncio.to_thread(render_labels_to_pdf, labels)
+        except Exception as e:  # noqa: BLE001
+            logger.exception('Ошибка генерации PDF (%s)', current_user.login)
+            return RedirectResponse(
+                url=f'/printing?error={quote(f"Ошибка генерации PDF: {e}")}',
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+
+        filename = _pdf_filename(product.article, batch_number, first_box, last_box)
+        logger.info(
+            'PDF сформирован (%s): пользователь=%s, продукт=%s, партия=%s, '
+            'коробки=%s–%s (%d стр.)',
+            engine, current_user.login, product.name, batch_number,
+            first_box, last_box, len(labels),
+        )
+
+        return Response(
+            content=pdf_bytes,
+            media_type='application/pdf',
+            headers={
+                'Content-Disposition': f'attachment; filename="{filename}"',
+                'X-Render-Engine': engine,
+                'Cache-Control': 'no-store',
+            },
+        )
+
+    # ── Обычная печать на принтер ─────────────────────────────────────────────
     print_job_data = PrintJobCreate(
         user_id=current_user.id,
         product_id=product_id,
-        printer_id=printer_id,
+        printer_id=printer_uuid,
         template_id=template.id,
         batch_number=batch_number.strip(),
         marking_date=marking_date,

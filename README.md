@@ -29,7 +29,8 @@
 **Печать**
 
 * задание на печать: партия, дата маркировки, диапазон номеров коробок; срок годности вычисляется автоматически;
-* печать DataMatrix-кодов из внешнего сервиса: флаг шаблона «Печатать DataMatrix-коды из внешнего сервиса» — перед печатью запрашивается список кодов (POST на `DATAMATRIX_SERVICE_URL`), коды подставляются в плейсхолдер `{datamatrix}`; если кодов нет или их меньше, чем коробок, — печать отменяется с сообщением об ошибке;
+* печать DataMatrix-кодов из внешнего сервиса: флаг шаблона «Печатать DataMatrix-коды из внешнего сервиса» — перед печатью запрашивается список кодов (по UUID продукта во внешнем сервисе либо резервно POST на `DATAMATRIX_SERVICE_URL`), коды подставляются в плейсхолдер `{datamatrix}`; если кодов нет или их меньше, чем коробок, — печать отменяется с предупреждением;
+* **сохранение в PDF вместо принтера**: все этикетки диапазона (с кодами) собираются в многостраничный PDF и скачиваются файлом;
 * асинхронная очередь печати: повторные попытки с экспоненциальной задержкой, ожидание снятия паузы принтера, остановка задания, докачка с места остановки;
 * журнал и история заданий, счётчик напечатанных этикеток;
 * статусы задания: `pending → processing → completed | failed | cancelled`.
@@ -50,7 +51,7 @@
 | База данных | PostgreSQL + asyncpg, Alembic |
 | Аутентификация | JWT (python-jose), passlib + Argon2 |
 | Печать | ZPL, TCP Socket (порт 9100), asyncio-очередь, драйверы типов принтеров |
-| Превью | Labelary API, бинарник zebrash, zebrafy, Pillow |
+| Превью | Labelary API, локальный zplr (Node), Pillow, собственный движок DataMatrix ECC200 |
 | Интерфейс | Jinja2, HTML/CSS/JS |
 
 ---
@@ -82,6 +83,10 @@ PrintingMachine/
 ├── crud/                    # CRUD-слои (base + по сущностям)
 ├── services/
 │   ├── print_queue.py       # Асинхронная очередь печати (воркеры, повторы, отмена)
+│   ├── datamatrix_service.py# Клиент внешнего сервиса кодов (по UUID продукта / POST)
+│   ├── datamatrix_renderer.py# Собственный движок DataMatrix ECC200 (кодирование + модули)
+│   ├── preview_renderer.py  # Цепочка рендера превью: Labelary → zplr → PIL
+│   ├── pdf_renderer.py      # Сборка этикеток диапазона в многостраничный PDF (локально)
 │   └── zpl_renderer.py      # Рендер ZPL → PNG (zebrash / zebrafy)
 ├── helpers/
 │   ├── printer_drivers.py   # Реестр драйверов типов принтеров (Zebra/TSC/ZPL)
@@ -144,6 +149,28 @@ User ── PrintJob
    * по завершении — статус `completed` и `completed_at`.
 5. Остановка задания: на принтер отправляется `~JA` (сброс его очереди), задание получает статус `cancelled`.
 
+### Сохранение в PDF вместо печати
+
+В выпадающем списке **«Принтер / вывод»** есть вариант **«💾 Сохранить в PDF»**
+(`printer_id=__pdf__`). В этом случае задание в очередь не ставится: сервер
+собирает **все** этикетки диапазона (по одной на коробку, с подставленными
+плейсхолдерами и DataMatrix-кодами) в один многостраничный PDF и отдаёт его
+файлом на скачивание.
+
+Сборка — `services/pdf_renderer.py`, **полностью локальная** (без Labelary и
+внешних сервисов):
+
+* каждая этикетка рендерится в PNG локальной цепочкой `render_preview_png_local`
+  (`services/preview_renderer.py`: zplr → PIL; DataMatrix рисует собственный
+  движок `services/datamatrix_renderer.py`);
+* страницы собираются в PDF через Pillow (203 dpi);
+* если локальный рендер недоступен — возвращается предупреждение.
+
+Для шаблонов с флагом «Печатать DataMatrix-коды из внешнего сервиса» в PDF
+используются те же коды, что пошли бы на печать (по одному на страницу). Если
+кодов нет или их меньше, чем коробок, — выгрузка PDF отменяется с
+предупреждением.
+
 ---
 
 ## Плейсхолдеры шаблона
@@ -196,9 +223,25 @@ User ── PrintJob
 Рендер выполняется цепочкой (`services/preview_renderer.py`), в ответе —
 заголовок `X-Render-Engine` (`labelary` / `zplr` / `pil`):
 
-* `POST /templates/preview/render` — основной предпросмотр (подстановка значений, даты в формате `YYMMDD`). Сначала **Labelary** (внешний HTTP, тот же вид, что и раньше), при его недоступности — локальный **zplr** (через Node-бридж `zplr_preview_server.mjs`, геометрия/графика как у Labelary, кириллица шрифтом `RobotoCondensed-Bold.ttf`), и в последнюю очередь — **Pillow** (`services/zpl_pil_renderer.py`);
+* `POST /templates/preview/render` — основной предпросмотр (подстановка значений, даты в формате `YYMMDD`). Сначала **Labelary** (внешний HTTP, тот же вид, что и раньше), при его недоступности — локальный **zplr** (через Node-бридж `zplr_preview_server.mjs`, геометрия/графика как у Labelary, кириллица шрифтом `RobotoCondensed-Bold.ttf`), и в последнюю очередь — **Pillow** (`services/zpl_pil_renderer.py`). DataMatrix во всех локальных движках рисует **собственный движок ECC200** (`services/datamatrix_renderer.py`) — без внешних библиотек;
 * `POST /templates/preview` — быстрый предпросмотр сырого кода той же цепочкой;
 * `POST /templates/preview/render_local` — **устаревший** маршрут через `render_zpl_preview()` (zebrash → zebrafy → PIL).
+
+### Собственный движок DataMatrix
+
+`services/datamatrix_renderer.py` — автономный кодировщик и отрисовщик
+DataMatrix **ECC200** на чистом Python (порт эталонного алгоритма ISO/IEC 16022,
+ZXing, Apache-2.0): ASCII-компактирование (цифровые пары, extended ASCII),
+Reed-Solomon ECC200 (GF(256), полином `0x12D`), размещение кодовых слов
+(annex M.1) и сборка символа с finder/clock-паттернами. Поддерживаются все
+квадратные размеры (10×10 … 144×144).
+
+* используется как **основной** движок DataMatrix в локальном рендере ZPL
+  (`services/zpl_pil_renderer.py`, команда `^BX`) и, соответственно, в PDF;
+* внешние зависимости (Labelary, zplr, libdmtx/pylibdmtx) не нужны;
+* результат совпадает с libdmtx побайтово (модуль в модуль) и декодируется
+  стандартными сканерами; геометрия (формат символа, размер модуля,
+  finder/clock) — как у Labelary.
 
 > Локальный фолбэк zplr **опционален** — требует Node.js (`node`) и зависимости
 > `zplr`, `skia-canvas` (`npm i` в корне проекта). Если их нет, цепочка тихо
@@ -213,10 +256,31 @@ User ── PrintJob
 (`is_print_gtin_unit`), то при запуске печати запрашивается список кодов
 DataMatrix у внешнего сервиса (`services/datamatrix_service.py`). Коды
 подставляются в ZPL-шаблон в плейсхолдер `{datamatrix}` — по одному коду на
-коробку. Если кодов нет или их меньше, чем коробок в задании, печать
-**отменяется** и пользователю показывается сообщение об ошибке.
+этикетку (коробку). Если кодов нет или их меньше, чем коробок в задании, печать
+**отменяется** и пользователю показывается предупреждение.
 
-**Запрос** — `POST` на `DATAMATRIX_SERVICE_URL` (JSON, при необходимости —
+### Основной источник — по UUID продукта
+
+У продукта можно задать **«UUID во внешнем сервисе кодов»** (`Product.external_uuid`).
+Если он заполнен, коды запрашиваются по нему:
+
+**Запрос** — `GET {CODES_SERVICE_URL}/codes/api/get_codes_by_product/`:
+
+```
+?uuid_product=<external_uuid>&count=<количество коробок>
+```
+
+Адрес базового сервиса задаётся переменной `CODES_SERVICE_URL`
+(по умолчанию `http://127.0.0.1:8000`), авторизация — тот же
+`DATAMATRIX_SERVICE_TOKEN` (заголовок `Authorization: Bearer ...`).
+
+**Ответ** — JSON-список строк, список объектов `{"code": "..."}` либо объект
+`{"codes": [...]}`. При пустом ответе печать отменяется с предупреждением.
+
+### Резервный источник — POST по артикулу/партии
+
+Если UUID продукта не задан, используется старый протокол — `POST` на
+`DATAMATRIX_SERVICE_URL` (JSON, при необходимости —
 `Authorization: Bearer <DATAMATRIX_SERVICE_TOKEN>`):
 
 ```json
@@ -233,7 +297,8 @@ DataMatrix у внешнего сервиса (`services/datamatrix_service.py`)
 
 **Ответ** — JSON-объект `{"codes": ["...", ...]}` (либо просто JSON-список
 строк). Протокол можно адаптировать под конкретный сервис в
-`services/datamatrix_service.py` (функция `fetch_datamatrix_codes`).
+`services/datamatrix_service.py` (функции `fetch_codes_by_product_uuid` и
+`fetch_datamatrix_codes`).
 
 ---
 
@@ -295,7 +360,7 @@ DataMatrix у внешнего сервиса (`services/datamatrix_service.py`)
 
 **Страницы:** `/` (главная), `/printing` (печать этикеток), `/printing/history` (история), `/workshops`, `/lines`, `/printers`, `/products`, `/templates`, `/users`, `/roles`, `/workshop-users`.
 
-**API печати:** `POST /printing/start`, `POST /api/printing/jobs/{job_id}/stop`, `GET /api/printing/jobs/user`, `GET /api/printing/jobs/active`, `GET /api/printing/template/{product_id}`, `GET /api/printing/printers`, `GET /api/printing/templates`.
+**API печати:** `POST /printing/start` (при `printer_id=__pdf__` возвращает PDF-файл вместо постановки задания), `POST /api/printing/jobs/{job_id}/stop`, `GET /api/printing/jobs/user`, `GET /api/printing/jobs/active`, `GET /api/printing/template/{product_id}`, `GET /api/printing/printers`, `GET /api/printing/templates`.
 
 **API управления принтерами:** `POST /api/printers/{id}/status`, `POST /api/printers/{id}/clear-queue`, `POST /api/printers/{id}/restart`, `POST /api/printers/{id}/pause`, `POST /api/printers/{id}/resume`, `POST /api/printers/{id}/contrast` (JSON `{"value": N}`), `POST /api/printers/{id}/speed` (JSON `{"value": N}`).
 
@@ -348,6 +413,9 @@ SECRET_KEY=change-me
 # DATAMATRIX_SERVICE_URL=https://dm-service.example.com/api/codes
 # DATAMATRIX_SERVICE_TOKEN=secret-token
 # DATAMATRIX_SERVICE_TIMEOUT=10
+
+# Внешний сервис кодов по UUID продукта (Product.external_uuid)
+# CODES_SERVICE_URL=http://127.0.0.1:8000
 
 # Предпросмотр
 # ZEBRASH_BINARY=/path/to/zebrash-render

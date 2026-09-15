@@ -190,7 +190,7 @@
                     {% if user and user.role and user.role.is_admin %}
                     <td class="actions-cell">
                         <button class="table-btn edit-btn"
-                                onclick='editProduct({{ product.id|string|tojson|safe }}, {{ product.name|tojson|safe }}, {{ product.article|tojson|safe }}, {{ product.gtin|tojson|safe }}, {{ (product.gtin_unit or "")|tojson|safe }}, {{ product.other_codes_1c|tojson|safe if product.other_codes_1c else "null"|tojson|safe }}, {{ product.date_expiration }}, {{ (product.name_line1 or "")|tojson|safe }}, {{ (product.name_line2 or "")|tojson|safe }}, {{ (product.tu_number or "")|tojson|safe }}, {{ (product.weight or "")|tojson|safe }}, {{ (product.fat_content or "")|tojson|safe }}, {{ (product.units_count or "")|tojson|safe }})'>
+                                onclick='editProduct({{ product.id|string|tojson|safe }}, {{ product.name|tojson|safe }}, {{ product.article|tojson|safe }}, {{ product.gtin|tojson|safe }}, {{ (product.gtin_unit or "")|tojson|safe }}, {{ (product.external_uuid or "")|tojson|safe }}, {{ product.other_codes_1c|tojson|safe if product.other_codes_1c else "null"|tojson|safe }}, {{ product.date_expiration }}, {{ (product.name_line1 or "")|tojson|safe }}, {{ (product.name_line2 or "")|tojson|safe }}, {{ (product.tu_number or "")|tojson|safe }}, {{ (product.weight or "")|tojson|safe }}, {{ (product.fat_content or "")|tojson|safe }}, {{ (product.units_count or "")|tojson|safe }})'>
                             ✏️ Редактировать
                         </button>
                         <button class="table-btn delete-btn"
@@ -296,6 +296,24 @@
                         >
                     </div>
                     <small class="form-hint">Используется в шаблоне через плейсхолдер {uip_gtin}</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="productExternalUuid" class="form-label">
+                        <span class="label-icon">🔗</span>
+                        UUID во внешнем сервисе кодов
+                    </label>
+                    <div class="input-wrapper">
+                        <input
+                            type="text"
+                            id="productExternalUuid"
+                            name="external_uuid"
+                            class="form-input"
+                            placeholder="00000000-0000-0000-0000-000000000000 (необязательно)"
+                            maxlength="64"
+                        >
+                    </div>
+                    <small class="form-hint">UUID продукта во внешнем сервисе: по нему запрашиваются коды DataMatrix для шаблонов с флагом «Печатать DataMatrix-коды из внешнего сервиса»</small>
                 </div>
 
                 <div class="form-group">
@@ -426,6 +444,7 @@ function openAddProductForm() {
     document.getElementById('productArticle').value = '';
     document.getElementById('productGtin').value = '';
     document.getElementById('productGtinUnit').value = '';
+    document.getElementById('productExternalUuid').value = '';
     document.getElementById('productOtherCodes').value = '';
     document.getElementById('productExpiration').value = '180';
     document.getElementById('productNameLine1').value = '';
@@ -438,7 +457,7 @@ function openAddProductForm() {
 }
 
 // Открыть форму редактирования
-function editProduct(id, name, article, gtin, gtinUnit, otherCodes, expiration, nameLine1, nameLine2, tuNumber, weight, fatContent, unitsCount) {
+function editProduct(id, name, article, gtin, gtinUnit, externalUuid, otherCodes, expiration, nameLine1, nameLine2, tuNumber, weight, fatContent, unitsCount) {
     document.getElementById('formTitle').textContent = '✏️ Редактировать продукт';
     document.getElementById('formSubmitText').textContent = 'Сохранить изменения';
     document.getElementById('productForm').action = `/products/${id}`;
@@ -447,6 +466,7 @@ function editProduct(id, name, article, gtin, gtinUnit, otherCodes, expiration, 
     document.getElementById('productArticle').value = article.trim();
     document.getElementById('productGtin').value = gtin.trim();
     document.getElementById('productGtinUnit').value = gtinUnit ? gtinUnit.trim() : '';
+    document.getElementById('productExternalUuid').value = externalUuid && externalUuid !== 'null' ? externalUuid.trim() : '';
     document.getElementById('productOtherCodes').value = otherCodes && otherCodes !== 'null' ? otherCodes.trim() : '';
     document.getElementById('productExpiration').value = expiration;
     document.getElementById('productNameLine1').value = nameLine1 && nameLine1 !== 'null' ? nameLine1 : '';

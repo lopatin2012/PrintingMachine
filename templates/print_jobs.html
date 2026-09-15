@@ -162,14 +162,14 @@
                         </div>
 
                         <div class="form-group" id="printerSelectGroup">
-                        <label for="printerSelect" class="form-label">Принтер</label>
+                        <label for="printerSelect" class="form-label">Принтер / вывод</label>
                         <div class="printer-select-wrapper">
                             <select id="printerSelect" name="printer_id" required class="form-input">
                                 <option value="" disabled selected>— загрузка принтеров... —</option>
                             </select>
                             <div class="printer-select-meta" id="printerSelectMeta"></div>
                         </div>
-                        <small class="form-hint">Принтеры вашего цеха с активным шаблоном для этого продукта</small>
+                        <small class="form-hint">Принтеры вашего цеха с активным шаблоном для этого продукта. Выберите «💾 Сохранить в PDF», чтобы скачать все этикетки файлом вместо печати</small>
                     </div>
 
                         <div class="printer-info-section">
@@ -342,6 +342,9 @@ let currentZplCode    = null;
 let currentTemplateId = null;
 let currentUipIncludeBatch = true;  // флаг «партия в УИП» из шаблона
 
+// Спецзначение выпадающего списка «Принтер»: вместо печати скачать PDF.
+const PDF_PRINTER_VALUE = '__pdf__';
+
 // ─── ПЕРЕМЕННЫЕ ДЛЯ УПРАВЛЕНИЯ ПРЕДПРОСМОТРОМ ────────────────────────────────
 let previewRotation = 0;          // Текущий угол поворота (градусы)
 let previewImageUrl = null;       // URL текущего изображения предпросмотра
@@ -500,10 +503,11 @@ document.getElementById('templateSelect').addEventListener('change', function() 
         else { typeEl.textContent = 'Другой формат'; typeEl.style.color = '#6c757d'; }
     }
 
-    // Синхронизируем выпадающий список принтеров (выбираем принтер, привязанный к шаблону)
+    // Синхронизируем выпадающий список принтеров (выбираем принтер, привязанный к шаблону).
+    // Если пользователь выбрал «Сохранить в PDF» — не сбрасываем этот выбор.
     const printerId = selectedOption.dataset.printerId;
     const printerSelect = document.getElementById('printerSelect');
-    if (printerSelect && printerId) {
+    if (printerSelect && printerId && printerSelect.value !== PDF_PRINTER_VALUE) {
         const printerOption = printerSelect.querySelector(`option[value="${printerId}"]`);
         if (printerOption) {
             printerSelect.value = printerId;
@@ -523,6 +527,37 @@ function onPrinterSelected(printer) {
     if (ipEl)   ipEl.textContent = `${printer.ip_address}:${printer.port_address}`;
 }
 
+// Обновляет карточку «Принтер» и кнопку отправки в зависимости от выбранного
+// варианта вывода (принтер или «Сохранить в PDF»).
+function setPrinterInfoForOutput(value, printers) {
+    const nameEl = document.getElementById('printerInfoName');
+    const ipEl   = document.getElementById('printerInfoIp');
+
+    if (value === PDF_PRINTER_VALUE) {
+        if (nameEl) { nameEl.textContent = '💾 Сохранить в PDF'; updateElementTooltip(nameEl, 'Сохранить в PDF'); }
+        if (ipEl)   ipEl.textContent = 'Файл будет скачан на компьютер';
+    } else {
+        const chosen = (printers || []).find(p => p.id === value);
+        if (chosen) onPrinterSelected(chosen);
+    }
+    updatePrintButtonLabel(value);
+}
+
+// Меняет подпись кнопки в зависимости от выбранного вывода.
+function updatePrintButtonLabel(value) {
+    const btn = document.getElementById('printSubmitBtn');
+    if (!btn) return;
+    const icon = btn.querySelector('.btn-icon');
+    const text = btn.querySelector('.btn-text');
+    if (value === PDF_PRINTER_VALUE) {
+        if (icon) icon.textContent = '💾';
+        if (text) text.textContent = 'Скачать PDF';
+    } else {
+        if (icon) icon.textContent = '🖨️';
+        if (text) text.textContent = 'Напечатать';
+    }
+}
+
 function loadPrinters(printers, defaultPrinterId = null) {
     const select = document.getElementById('printerSelect');
     const meta   = document.getElementById('printerSelectMeta');
@@ -530,10 +565,18 @@ function loadPrinters(printers, defaultPrinterId = null) {
 
     select.innerHTML = '';
 
+    // Вариант «Сохранить в PDF» доступен всегда и идёт первым.
+    const pdfOption = document.createElement('option');
+    pdfOption.value = PDF_PRINTER_VALUE;
+    pdfOption.textContent = '💾 Сохранить в PDF (скачать)';
+    select.appendChild(pdfOption);
+
     if (printers.length === 0) {
-        select.innerHTML = '<option value="" disabled selected>Нет доступных принтеров</option>';
-        if (meta) meta.textContent = 'В вашем цехе нет принтеров';
-        select.disabled = true;
+        if (meta) meta.textContent = 'Принтеры недоступны — можно сохранить в PDF';
+        select.disabled = false;
+        select.value = PDF_PRINTER_VALUE;
+        setPrinterInfoForOutput(PDF_PRINTER_VALUE, printers);
+        select.onchange = () => setPrinterInfoForOutput(select.value, printers);
         return;
     }
 
@@ -559,15 +602,13 @@ function loadPrinters(printers, defaultPrinterId = null) {
     const toSelect = defaultPrinterId ?? (printers.length === 1 ? printers[0].id : null);
     if (toSelect) {
         select.value = toSelect;
-        const chosen = printers.find(p => p.id === toSelect);
-        if (chosen) onPrinterSelected(chosen);
     }
 
     select.disabled = false;
+    setPrinterInfoForOutput(select.value, printers);
 
     select.onchange = () => {
-        const chosen = printers.find(p => p.id === select.value);
-        if (chosen) onPrinterSelected(chosen);
+        setPrinterInfoForOutput(select.value, printers);
     };
 }
 
@@ -795,10 +836,74 @@ function setupFormValidation() {
         if (!batchNumber) { e.preventDefault(); alert('Введите номер партии'); document.getElementById('batchNumber').focus(); return; }
         if (firstBox <= 0 || lastBox <= 0) { e.preventDefault(); alert('Номера коробок должны быть больше 0'); return; }
         if (firstBox > lastBox) { e.preventDefault(); alert('Номер первой коробки не может быть больше номера последней'); return; }
+
+        const output = document.getElementById('printerSelect')?.value;
+        if (output === PDF_PRINTER_VALUE) {
+            // Вместо печати — формируем PDF и скачиваем его.
+            e.preventDefault();
+            submitPdf(form, submitBtn);
+            return;
+        }
+
         submitBtn.disabled = true;
         submitBtn.querySelector('.btn-text').textContent = 'Запуск печати...';
         submitBtn.querySelector('.btn-spinner').classList.remove('hidden');
     });
+}
+
+// Формирование PDF на сервере и скачивание файла.
+async function submitPdf(form, btn) {
+    const icon    = btn.querySelector('.btn-icon');
+    const text    = btn.querySelector('.btn-text');
+    const spinner = btn.querySelector('.btn-spinner');
+
+    btn.disabled = true;
+    if (icon) icon.textContent = '⏳';
+    if (text) text.textContent = 'Формирование PDF...';
+    if (spinner) spinner.classList.remove('hidden');
+
+    try {
+        const body = new URLSearchParams();
+        new FormData(form).forEach((value, key) => body.append(key, value));
+
+        const resp = await fetch(form.action, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body,
+            redirect: 'follow',
+        });
+
+        const ctype = (resp.headers.get('content-type') || '').toLowerCase();
+        if (ctype.includes('application/pdf')) {
+            const blob      = await resp.blob();
+            const objectUrl = URL.createObjectURL(blob);
+
+            let filename = 'labels.pdf';
+            const cd = resp.headers.get('content-disposition') || '';
+            const match = cd.match(/filename\*?=(?:UTF-8''|"?)([^";]+)/i);
+            if (match) {
+                try { filename = decodeURIComponent(match[1]); } catch (_) { filename = match[1]; }
+            }
+
+            const link = document.createElement('a');
+            link.href = objectUrl;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            setTimeout(() => URL.revokeObjectURL(objectUrl), 15000);
+        } else {
+            // Ошибка на сервере: обычно редирект на /printing?error=...
+            window.location.href = resp.url || '/printing';
+        }
+    } catch (err) {
+        alert('Ошибка формирования PDF: ' + err.message);
+    } finally {
+        btn.disabled = false;
+        if (spinner) spinner.classList.add('hidden');
+        if (icon) icon.textContent = '💾';
+        if (text) text.textContent = 'Скачать PDF';
+    }
 }
 
 // ─── ОСТАНОВКА ЗАДАНИЯ ───────────────────────────────────────────────────────

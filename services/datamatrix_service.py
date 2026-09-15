@@ -38,21 +38,52 @@ DATAMATRIX_SERVICE_URL = os.getenv('DATAMATRIX_SERVICE_URL', '').strip().rstrip(
 DATAMATRIX_SERVICE_TOKEN = os.getenv('DATAMATRIX_SERVICE_TOKEN', '').strip()
 DATAMATRIX_SERVICE_TIMEOUT = float(os.getenv('DATAMATRIX_SERVICE_TIMEOUT', '10'))
 
+# Внешний сервис кодов по UUID продукта.
+# GET {CODES_SERVICE_URL}/codes/api/get_codes_by_product/?uuid_product=<uuid>&count=<n>
+# По умолчанию — адрес из примера интеграции (localhost:8000).
+CODES_SERVICE_URL = os.getenv('CODES_SERVICE_URL', 'http://127.0.0.1:8000').strip().rstrip('/')
+CODES_SERVICE_PATH = '/codes/api/get_codes_by_product/'
+
 
 class DatamatrixServiceError(Exception):
     """Ошибка обращения к внешнему сервису DataMatrix."""
     pass
 
 
+def _code_from_item(item) -> str:
+    """Извлечь строку кода из элемента ответа сервиса.
+
+    Поддерживает как «плоские» строки, так и объекты вида
+    {"code": "..."} / {"datamatrix": "..."} / {"value": "..."}.
+    """
+    if item in (None, ''):
+        return ''
+    if isinstance(item, dict):
+        for key in ('code', 'datamatrix', 'data', 'value', 'uip', 'mark'):
+            value = item.get(key)
+            if isinstance(value, str) and value:
+                return value
+        return ''
+    return str(item)
+
+
 def _extract_codes(data) -> List[str]:
-    """Извлечь список кодов из ответа сервиса (объект {codes: [...]} или список)."""
+    """Извлечь список кодов из ответа сервиса.
+
+    Поддерживаются варианты: JSON-список строк, список объектов,
+    объект {codes: [...]} и вложенные объекты (data/result).
+    """
     if isinstance(data, list):
-        return [str(item) for item in data if item not in (None, '')]
+        return [code for code in (_code_from_item(item) for item in data) if code]
     if isinstance(data, dict):
-        for key in ('codes', 'datamatrix', 'data', 'items'):
+        for key in ('codes', 'datamatrix', 'data', 'items', 'result'):
             value = data.get(key)
             if isinstance(value, list):
-                return [str(item) for item in value if item not in (None, '')]
+                return [code for code in (_code_from_item(item) for item in value) if code]
+            if isinstance(value, dict):
+                nested = _extract_codes(value)
+                if nested:
+                    return nested
     return []
 
 
@@ -114,4 +145,61 @@ async def fetch_datamatrix_codes(
 
     codes = _extract_codes(data)
     logger.info('Сервис DataMatrix вернул %d кодов', len(codes))
+    return codes
+
+
+async def fetch_codes_by_product_uuid(
+    *,
+    external_uuid: str,
+    count: int,
+) -> List[str]:
+    """Запросить коды DataMatrix по UUID продукта во внешнем сервисе.
+
+    Выполняет GET на
+    `{CODES_SERVICE_URL}/codes/api/get_codes_by_product/` с параметрами
+    `uuid_product` (UUID продукта из внешнего сервиса, хранится в
+    `Product.external_uuid`) и `count` (сколько кодов нужно).
+
+    Возвращает список кодов. При отсутствии UUID, недоступности сервиса
+    или пустом ответе поднимает DatamatrixServiceError.
+    """
+    external_uuid = (external_uuid or '').strip()
+    if not external_uuid:
+        raise DatamatrixServiceError(
+            'У продукта не задан UUID во внешнем сервисе кодов '
+            '(поле «UUID во внешнем сервисе кодов»)'
+        )
+
+    try:
+        requested = max(0, int(count))
+    except (TypeError, ValueError):
+        requested = 0
+
+    url = f'{CODES_SERVICE_URL}{CODES_SERVICE_PATH}'
+    params = {'uuid_product': external_uuid, 'count': requested}
+    headers = {}
+    if DATAMATRIX_SERVICE_TOKEN:
+        headers['Authorization'] = f'Bearer {DATAMATRIX_SERVICE_TOKEN}'
+
+    logger.info(
+        'Запрос кодов по UUID продукта: %s?uuid_product=%s&count=%d',
+        url, external_uuid, requested,
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=DATAMATRIX_SERVICE_TIMEOUT) as client:
+            response = await client.get(url, params=params, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+    except httpx.RequestError as e:
+        raise DatamatrixServiceError(
+            f'Не удалось связаться с сервисом кодов: {e}'
+        ) from e
+    except (httpx.HTTPStatusError, ValueError) as e:
+        raise DatamatrixServiceError(
+            f'Сервис кодов вернул ошибку: {e}'
+        ) from e
+
+    codes = _extract_codes(data)
+    logger.info('Сервис кодов вернул %d кодов по UUID %s', len(codes), external_uuid)
     return codes

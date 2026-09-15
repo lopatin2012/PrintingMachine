@@ -27,6 +27,14 @@ product_crud = ProductCRUD()
 
 # Локальные функции.
 
+def _is_valid_uuid(value: str) -> bool:
+    """Проверить, что строка — корректный UUID."""
+    try:
+        UUID(str(value))
+        return True
+    except (ValueError, AttributeError, TypeError):
+        return False
+
 def _build_pagination_query(
         search: Optional[str] = None,
         expiration_filter: Optional[str] = None
@@ -166,6 +174,7 @@ async def product_create(
         article: str = Form(...),
         gtin: str = Form(...),
         gtin_unit: str = Form(None),
+        external_uuid: str = Form(None),
         other_codes_1c: str = Form(None),
         date_expiration: int = Form(...),
         name_line1: str = Form(None),
@@ -182,6 +191,7 @@ async def product_create(
     article = article.strip()
     gtin = gtin.strip()
     gtin_unit = (gtin_unit or '').strip() or None
+    external_uuid = (external_uuid or '').strip() or None
     name_line1 = (name_line1 or '').strip() or None
     name_line2 = (name_line2 or '').strip() or None
     tu_number = (tu_number or '').strip() or None
@@ -224,6 +234,13 @@ async def product_create(
     if gtin_unit and (not gtin_unit.isdigit() or len(gtin_unit) not in (13, 14)):
         return RedirectResponse(
             url='/products?error=GTIN единицы продукции должен содержать 13 или 14 цифр',
+            status_code=status.HTTP_303_SEE_OTHER
+        )
+
+    # Валидация UUID внешнего сервиса кодов (опционально)
+    if external_uuid and not _is_valid_uuid(external_uuid):
+        return RedirectResponse(
+            url='/products?error=UUID внешнего сервиса должен быть корректным UUID',
             status_code=status.HTTP_303_SEE_OTHER
         )
 
@@ -278,6 +295,7 @@ async def product_create(
         article=article,
         gtin=gtin,
         gtin_unit=gtin_unit,
+        external_uuid=external_uuid,
         other_codes_1c=other_codes_1c,
         date_expiration=date_expiration,
         name_line1=name_line1,
@@ -307,6 +325,7 @@ async def product_update(
         article: str = Form(...),
         gtin: str = Form(...),
         gtin_unit: str = Form(None),
+        external_uuid: str = Form(None),
         other_codes_1c: str = Form(None),
         date_expiration: int = Form(...),
         name_line1: str = Form(None),
@@ -331,6 +350,7 @@ async def product_update(
     article = article.strip()
     gtin = gtin.strip()
     gtin_unit = (gtin_unit or '').strip() or None
+    external_uuid = (external_uuid or '').strip() or None
     name_line1 = (name_line1 or '').strip() or None
     name_line2 = (name_line2 or '').strip() or None
     tu_number = (tu_number or '').strip() or None
@@ -373,6 +393,13 @@ async def product_update(
     if gtin_unit and (not gtin_unit.isdigit() or len(gtin_unit) not in (13, 14)):
         return RedirectResponse(
             url='/products?error=GTIN единицы продукции должен содержать 13 или 14 цифр',
+            status_code=status.HTTP_303_SEE_OTHER
+        )
+
+    # Валидация UUID внешнего сервиса кодов (опционально)
+    if external_uuid and not _is_valid_uuid(external_uuid):
+        return RedirectResponse(
+            url='/products?error=UUID внешнего сервиса должен быть корректным UUID',
             status_code=status.HTTP_303_SEE_OTHER
         )
 
@@ -436,6 +463,7 @@ async def product_update(
         article=article,
         gtin=gtin,
         gtin_unit=gtin_unit,
+        external_uuid=external_uuid,
         other_codes_1c=other_codes_1c,
         date_expiration=date_expiration,
         name_line1=name_line1,

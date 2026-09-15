@@ -133,3 +133,22 @@ def render_preview_png(zpl: str, dpmm: int = 8) -> tuple[bytes, str]:
         logger.info("Превью отрендерено движком %s (%d bytes)", engine, len(data))
         return data, engine
     raise PreviewRenderError("Не удалось отрендерить превью ни одним движком")
+
+
+def render_preview_png_local(zpl: str, dpmm: int = 8) -> tuple[bytes, str]:
+    """Локальный рендер без внешних сервисов: zplr (Node) → PIL.
+
+    Используется для генерации PDF, чтобы не зависеть от Labelary.
+    """
+    for engine, fn in (
+        ("zplr", lambda: render_via_zplr(zpl, dpmm)),
+        ("pil", lambda: render_zpl_to_png(zpl)),
+    ):
+        try:
+            data = fn()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Локальный рендер движком %s не удался: %s", engine, e)
+            continue
+        logger.info("Локальное превью отрендерено движком %s (%d bytes)", engine, len(data))
+        return data, engine
+    raise PreviewRenderError("Не удалось отрендерить превью локально")

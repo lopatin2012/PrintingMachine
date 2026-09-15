@@ -2,6 +2,7 @@
 
 import logging
 import asyncio
+from datetime import date, datetime, timedelta
 from uuid import UUID
 from typing import Optional
 
@@ -538,6 +539,76 @@ async def get_templates_by_product(
         "product_id": str(product_id),
         "templates": templates_data,
         "count": len(templates_data)
+    }
+
+
+@router.get('/api/templates/zpl/{gtin}')
+async def get_active_template_zpl(
+        gtin: str,
+        batch_number: str = Query('', description='Номер партии'),
+        marking_date: Optional[date] = Query(
+            None, description='Дата маркировки (YYYY-MM-DD), по умолчанию — сегодня'
+        ),
+        current_box: int = Query(1, ge=1, description='Номер коробки'),
+        datamatrix: str = Query('', description='Код DataMatrix из внешнего сервиса'),
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_user)
+):
+    """ZPL-код активного шаблона по GTIN групповой упаковки.
+
+    Все плейсхолдеры подставляются: данные продукта — из БД, данные печати —
+    из query-параметров (партия, дата маркировки, номер коробки, DataMatrix).
+    Срок годности вычисляется как дата маркировки + product.date_expiration.
+    """
+    product = await product_crud.get_by_gtin(db, gtin.strip())
+    if not product:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f'Продукт с GTIN "{gtin}" не найден'
+        )
+
+    template = await template_crud.get_active_by_product(db, product.id)
+    if not template:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f'Активный шаблон для продукта с GTIN "{gtin}" не найден'
+        )
+
+    mark_dt = marking_date or datetime.today().date()
+    expiration_dt = mark_dt + timedelta(days=product.date_expiration or 0)
+
+    zpl = substitute_placeholders(
+        template.print_code,
+        batch_number=batch_number,
+        marking_date=mark_dt,
+        expiration_date=expiration_dt,
+        current_box=current_box,
+        gtin=product.gtin or '',
+        gtin_unit=product.gtin_unit or '',
+        article=product.article or '',
+        uip_include_batch=bool(template.uip_include_batch),
+        datamatrix=datamatrix,
+        product_name=product.name or '',
+        name_line1=product.name_line1 or '',
+        name_line2=product.name_line2 or '',
+        tu_number=product.tu_number or '',
+        weight=product.weight or '',
+        fat_content=product.fat_content or '',
+        units_count=product.units_count or '',
+    )
+
+    return {
+        'success': True,
+        'gtin': product.gtin,
+        'product_id': str(product.id),
+        'product_name': product.name,
+        'template_id': str(template.id),
+        'template_name': template.name,
+        'uip_include_batch': bool(template.uip_include_batch),
+        'is_print_gtin_unit': bool(template.is_print_gtin_unit),
+        'marking_date': mark_dt.isoformat(),
+        'expiration_date': expiration_dt.isoformat(),
+        'zpl': zpl,
     }
 
 

@@ -3,7 +3,7 @@
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, desc
 from crud.base import BaseCRUD
 from models import CodeTemplate
 from schemas import CodeTemplateCreate, CodeTemplateUpdate
@@ -31,3 +31,15 @@ class CodeTemplateCRUD(BaseCRUD[CodeTemplate, CodeTemplateCreate, CodeTemplateUp
             select(self.model).where(self.model.product_id == product_id)
         )
         return result.scalars().all()
+
+    async def get_active_by_product(self, db: AsyncSession, product_id: UUID):
+        """Получить активный шаблон для продукта (самый новый)"""
+        result = await db.execute(
+            select(self.model)
+            .where(
+                self.model.product_id == product_id,
+                self.model.is_active == True
+            )
+            .order_by(desc(self.model.created_at))
+        )
+        return result.scalars().first()
