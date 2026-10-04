@@ -36,6 +36,18 @@ product_crud = ProductCRUD()
 printer_crud = PrinterCRUD()
 
 
+def _sample_datamatrix_code(gtin: str = '') -> str:
+    """Демонстрационный GS1-код DataMatrix для предпросмотра этикетки.
+
+    Строится по реальному GTIN продукта (если передан), чтобы предпросмотр
+    выглядел как настоящая этикетка. Серийная часть — фиктивная.
+    """
+    clean = ''.join(ch for ch in (gtin or '') if ch.isdigit())
+    gtin14 = (clean or '04601751029232')[:14].ljust(14, '0')
+    # 01 — GTIN, 21 — серийный номер, GS + 93 — демо-хвост.
+    return f'01{gtin14}21PREVIEW00001\x1d93DEMO'
+
+
 @router.get('/templates', response_class=HTMLResponse)
 async def template_page(
         request: Request,
@@ -555,6 +567,7 @@ async def render_template_preview(
         gtin: str = Form(''),
         gtin_unit: str = Form(''),
         article: str = Form(''),
+        datamatrix: str = Form(''),
         uip_include_batch: bool = Form(False),
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_user)
@@ -612,6 +625,13 @@ async def render_template_preview(
                     exp_days = 0
             expiration_dt = marking_dt + timedelta(days=exp_days if exp_days > 0 else 7)
 
+        # Для предпросмотра DataMatrix: если в шаблоне есть плейсхолдер
+        # {datamatrix}, а реальный код не передан — подставляем демо-код,
+        # чтобы увидеть, как его отрисует собственный рендерер.
+        preview_datamatrix = (datamatrix or '').strip()
+        if not preview_datamatrix and '{datamatrix}' in zpl_code:
+            preview_datamatrix = _sample_datamatrix_code(gtin_unit or gtin)
+
         preview_code = substitute_placeholders(
             zpl_code,
             batch_number=batch_number,
@@ -622,6 +642,7 @@ async def render_template_preview(
             gtin_unit=gtin_unit,
             article=article,
             uip_include_batch=uip_include_batch,
+            datamatrix=preview_datamatrix,
         )
 
         # Добавляем ^XZ если отсутствует (обязательная команда завершения этикетки ZPL)

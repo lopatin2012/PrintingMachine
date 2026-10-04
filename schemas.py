@@ -234,6 +234,7 @@ class ProductBase(BaseModel):
     name: str = Field(..., max_length=200, description='Наименование')
     gtin: str = Field(..., max_length=50, description='GTIN групповой упаковки')
     gtin_unit: Optional[str] = Field(None, max_length=50, description='GTIN единицы продукции (для УИП/DataMatrix)')
+    external_uuid: Optional[str] = Field(None, max_length=100, description='UUID продукта во внешнем сервисе кодов (для DataMatrix)')
     other_codes_1c: Optional[str] = Field(None, description='Другие коды 1C')
     date_expiration: int = Field(..., ge=0, description='Срок годности в днях')
 
@@ -248,6 +249,7 @@ class ProductUpdate(BaseModel):
     name: Optional[str] = Field(None, max_length=200, description='Наименование')
     gtin: Optional[str] = Field(None, max_length=50, description='GTIN групповой упаковки')
     gtin_unit: Optional[str] = Field(None, max_length=50, description='GTIN единицы продукции (для УИП/DataMatrix)')
+    external_uuid: Optional[str] = Field(None, max_length=100, description='UUID продукта во внешнем сервисе кодов (для DataMatrix)')
     other_codes_1c: Optional[str] = Field(None, description='Другие коды 1C')
     date_expiration: Optional[int] = Field(None, ge=0, description='Срок годности в днях')
 

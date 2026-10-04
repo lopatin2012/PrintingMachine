@@ -135,6 +135,7 @@ class Product(Base):
     name = Column(String(200), nullable=False, comment='Наименование')
     gtin = Column(String(50), unique=True, nullable=False, comment='GTIN групповой упаковки')
     gtin_unit = Column(String(50), unique=True, nullable=True, comment='GTIN единицы продукции (для УИП/DataMatrix)')
+    external_uuid = Column(String(100), index=True, nullable=True, comment='UUID продукта во внешнем сервисе кодов (для DataMatrix-кодов по UUID)')
     other_codes_1c = Column(Text, nullable=True, comment='Другие коды 1C')
     date_expiration = Column(Integer, nullable=False, comment='Срок годности в днях')
     created_at = Column(MoscowDateTime(), server_default=func.now())

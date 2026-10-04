@@ -342,6 +342,9 @@ let currentZplCode    = null;
 let currentTemplateId = null;
 let currentUipIncludeBatch = true;  // флаг «партия в УИП» из шаблона
 
+// Специальный пункт внутри списка принтеров — сохранить коды в PDF.
+const PRINTER_SAVE_PDF = '__save_pdf__';
+
 // ─── ПЕРЕМЕННЫЕ ДЛЯ УПРАВЛЕНИЯ ПРЕДПРОСМОТРОМ ────────────────────────────────
 let previewRotation = 0;          // Текущий угол поворота (градусы)
 let previewImageUrl = null;       // URL текущего изображения предпросмотра
@@ -555,10 +558,17 @@ function loadPrinters(printers, defaultPrinterId = null) {
         select.appendChild(opt);
     });
 
+    // Пункт прямо в списке принтеров: сохранить коды DataMatrix в PDF.
+    const savePdfOpt = document.createElement('option');
+    savePdfOpt.value = PRINTER_SAVE_PDF;
+    savePdfOpt.textContent = '💾 Сохранить коды в PDF';
+    select.appendChild(savePdfOpt);
+
     // Выбираем принтер из шаблона, либо единственный доступный
     const toSelect = defaultPrinterId ?? (printers.length === 1 ? printers[0].id : null);
     if (toSelect) {
         select.value = toSelect;
+        select.dataset.prevPrinter = toSelect;
         const chosen = printers.find(p => p.id === toSelect);
         if (chosen) onPrinterSelected(chosen);
     }
@@ -566,6 +576,20 @@ function loadPrinters(printers, defaultPrinterId = null) {
     select.disabled = false;
 
     select.onchange = () => {
+        // Выбран пункт «Сохранить коды в PDF» — запускаем выгрузку и
+        // возвращаем в списке предыдущий (реальный) принтер.
+        if (select.value === PRINTER_SAVE_PDF) {
+            const prev = select.dataset.prevPrinter
+                || (printers[0] && printers[0].id) || '';
+            downloadCodesPdf();
+            if (prev) {
+                select.value = prev;
+                const chosen = printers.find(p => p.id === prev);
+                if (chosen) onPrinterSelected(chosen);
+            }
+            return;
+        }
+        select.dataset.prevPrinter = select.value;
         const chosen = printers.find(p => p.id === select.value);
         if (chosen) onPrinterSelected(chosen);
     };
@@ -970,6 +994,57 @@ function downloadPreview() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+}
+
+// ─── ВЫГРУЗКА КОДОВ DATAMATRIX В PDF ─────────────────────────────────────────
+async function downloadCodesPdf() {
+    const productId = document.getElementById('selectedProductId')?.value;
+    if (!productId) {
+        alert('Сначала выберите продукт для печати');
+        return;
+    }
+
+    const firstBox = parseInt(document.getElementById('firstBox')?.value) || 1;
+    const lastBox  = parseInt(document.getElementById('lastBox')?.value)  || firstBox;
+    if (lastBox < firstBox) {
+        alert('Номер последней коробки не может быть меньше первой');
+        return;
+    }
+    const amount = lastBox - firstBox + 1;
+
+    try {
+        const params = new URLSearchParams({ product_id: productId, amount });
+        // Размер DataMatrix берётся из выбранного шаблона (как при печати).
+        const templateId = currentTemplateId
+            || document.getElementById('templateSelect')?.value;
+        if (templateId) params.set('template_id', templateId);
+        const resp = await fetch(`/api/printing/codes/pdf?${params.toString()}`);
+        if (!resp.ok) {
+            let msg = `Ошибка ${resp.status}`;
+            try {
+                const data = await resp.json();
+                if (data && data.detail) msg = data.detail;
+            } catch (e) { /* не JSON */ }
+            alert('Не удалось сформировать PDF: ' + msg);
+            return;
+        }
+
+        const blob = await resp.blob();
+        const cd = resp.headers.get('Content-Disposition') || '';
+        const match = cd.match(/filename="?([^";]+)"?/);
+        const filename = match ? match[1] : `codes_${productId}.pdf`;
+
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    } catch (err) {
+        alert('Ошибка при скачивании PDF: ' + err.message);
+    }
 }
 
 // ─── УВЕЛИЧЕНИЕ ИЗОБРАЖЕНИЯ ────────────────────────────────────────────────

@@ -38,3 +38,12 @@ class ProductCRUD(BaseCRUD[Product, ProductCreate, ProductUpdate]):
         )
 
         return result.scalar_one_or_none()
+
+    async def get_by_external_uuid(self, db: AsyncSession, external_uuid: str) -> Product | None:
+        """Получить продукт по UUID во внешнем сервисе кодов"""
+        result = await db.execute(
+            select(self.model)
+            .where(self.model.external_uuid == external_uuid)
+        )
+
+        return result.scalar_one_or_none()
