@@ -23,6 +23,7 @@ import httpx
 
 from config import CONFIG_BASE_DIR as BASE_DIR
 from services.zpl_pil_renderer import render_zpl_to_png
+from services.datamatrix_renderer import replace_datamatrix_with_graphics
 
 logger = logging.getLogger(__name__)
 
@@ -119,10 +120,30 @@ def render_via_zplr(zpl: str, dpmm: int = 8) -> bytes:
 
 
 def render_preview_png(zpl: str, dpmm: int = 8) -> tuple[bytes, str]:
-    """Цепочка рендера. Возвращает (png_bytes, engine)."""
+    """Цепочка рендера. Возвращает (png_bytes, engine).
+
+    DataMatrix обрабатывается собственным локальным рендерером: поля ``^BX``
+    заменяются на растровую ZPL-графику ``^GF``, сгенерированную
+    ``services.datamatrix_renderer``. Поэтому сам символ DataMatrix НЕ рисует
+    Labelary/zplr — они лишь размещают готовое изображение. Если в ZPL нет
+    DataMatrix или замена не удалась, рендер идёт как раньше, а локальный
+    PIL-фолбэк всё равно рисует ``^BX`` своим рендерером.
+    """
+    zpl_external = zpl
+    try:
+        zpl_external, dm_count = replace_datamatrix_with_graphics(zpl)
+        if dm_count:
+            logger.info(
+                "DataMatrix: %d символ(ов) отрисовано локальным рендерером "
+                "(^BX -> ^GF)", dm_count,
+            )
+    except Exception as e:  # noqa: BLE001 - не ломаем превью из-за DM
+        logger.warning("Не удалось подготовить локальный DataMatrix: %s", e)
+        zpl_external = zpl
+
     for engine, fn in (
-        ("labelary", lambda: render_via_labelary(zpl, dpmm)),
-        ("zplr", lambda: render_via_zplr(zpl, dpmm)),
+        ("labelary", lambda: render_via_labelary(zpl_external, dpmm)),
+        ("zplr", lambda: render_via_zplr(zpl_external, dpmm)),
         ("pil", lambda: render_zpl_to_png(zpl)),
     ):
         try:
@@ -132,4 +153,4 @@ def render_preview_png(zpl: str, dpmm: int = 8) -> tuple[bytes, str]:
             continue
         logger.info("Превью отрендерено движком %s (%d bytes)", engine, len(data))
         return data, engine
-    raise PreviewRenderError("Не удалось отрендерить превью ни одним движком")
+    raise PreviewRenderError("Не удалось отрендерить ни одним движком")

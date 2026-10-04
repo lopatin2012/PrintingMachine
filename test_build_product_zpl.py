@@ -106,3 +106,26 @@ def test_empty_gtin_unit_removes_placeholder():
         marking_date=date(2026, 3, 5),
     )
     assert '{uip_gtin}' not in zpl
+
+
+def test_datamatrix_placeholder_substituted():
+    zpl = build_product_zpl(
+        '^XA^FO10,10^BXN,4,200^FD{datamatrix}^FS^XZ',
+        product=_product(),
+        batch_number='1',
+        marking_date=date(2026, 3, 5),
+        datamatrix='010460999000001121000001\x1d930001',
+    )
+    assert '{datamatrix}' not in zpl
+    assert '010460999000001121000001' in zpl
+
+
+def test_datamatrix_placeholder_removed_when_no_code():
+    zpl = build_product_zpl(
+        '^XA^FO10,10^BXN,4,200^FD{datamatrix}^FS^XZ',
+        product=_product(),
+        batch_number='1',
+        marking_date=date(2026, 3, 5),
+        datamatrix='',
+    )
+    assert '{datamatrix}' not in zpl

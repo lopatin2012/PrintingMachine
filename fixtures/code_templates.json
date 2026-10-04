@@ -1,0 +1,112 @@
+[
+  {
+    "id": "1f42c813-8796-42bc-8928-ac460d7cf796",
+    "product_article": "13522",
+    "printer_name": "Тестовый принтер",
+    "name": "Тестовый DM",
+    "print_code": "^XA^PW1100\n^LL1100\n^CI28\n~SD14\n^PR10\n^FO50,100 ^BXN,5,200,,,,\\,1 ^FD{datamatrix}^FS\n\n^XZ",
+    "is_active": true,
+    "uip_include_batch": false,
+    "is_print_gtin_unit": true
+  },
+  {
+    "id": "078b2959-4ccb-4b56-87df-736fd2e17076",
+    "product_article": "13524",
+    "printer_name": "Тестовый принтер",
+    "name": "Тестовый DM",
+    "print_code": "^XA^PW1100\n^LL1100\n^CI28\n~SD14\n^PR10\n^FO50,100 ^BXN,5,200,,,,\\,1 ^FD{datamatrix}^FS\n\n^XZ",
+    "is_active": true,
+    "uip_include_batch": false,
+    "is_print_gtin_unit": true
+  },
+  {
+    "id": "cf0b97a2-1e75-4c16-a3f3-1ce68eab4c73",
+    "product_article": "13526",
+    "printer_name": "Тестовый принтер",
+    "name": "Тестовый DM",
+    "print_code": "^XA^PW1100\n^LL1100\n^CI28\n~SD14\n^PR10\n^FO50,100 ^BXN,5,200,,,,\\,1 ^FD{datamatrix}^FS\n\n^XZ",
+    "is_active": true,
+    "uip_include_batch": false,
+    "is_print_gtin_unit": true
+  },
+  {
+    "id": "b18a5949-8d53-4d03-9ab1-313647f66479",
+    "product_article": "15617",
+    "printer_name": "Тестовый принтер",
+    "name": "Тестовый DM",
+    "print_code": "^XA^PW1100\n^LL1100\n^CI28\n~SD14\n^PR10\n^FO50,100 ^BXN,5,200,,,,\\,1 ^FD{datamatrix}^FS\n\n^XZ",
+    "is_active": true,
+    "uip_include_batch": false,
+    "is_print_gtin_unit": true
+  },
+  {
+    "id": "63d9faae-183a-4581-b578-7207475c7621",
+    "product_article": "15621",
+    "printer_name": "Тестовый принтер",
+    "name": "Тестовый DM",
+    "print_code": "^XA^PW1100\n^LL1100\n^CI28\n~SD14\n^PR10\n^FO50,100 ^BXN,5,200,,,,\\,1 ^FD{datamatrix}^FS\n\n^XZ",
+    "is_active": true,
+    "uip_include_batch": false,
+    "is_print_gtin_unit": true
+  },
+  {
+    "id": "d8f2492d-6e3b-4d31-a3f6-00f375d06882",
+    "product_article": "15623",
+    "printer_name": "Тестовый принтер",
+    "name": "Тестовый DM",
+    "print_code": "^XA^PW1100\n^LL1100\n^CI28\n~SD14\n^PR10\n^FO50,100 ^BXN,5,200,,,,\\,1 ^FD{datamatrix}^FS\n\n^XZ",
+    "is_active": true,
+    "uip_include_batch": false,
+    "is_print_gtin_unit": true
+  },
+  {
+    "id": "4a3d0da5-d82d-4eaa-bdfa-80293863fffb",
+    "product_article": "15625",
+    "printer_name": "Тестовый принтер",
+    "name": "Тестовый DM",
+    "print_code": "^XA^PW1100\n^LL1100\n^CI28\n~SD14\n^PR10\n^FO50,100 ^BXN,5,200,,,,\\,1 ^FD{datamatrix}^FS\n\n^XZ",
+    "is_active": true,
+    "uip_include_batch": false,
+    "is_print_gtin_unit": true
+  },
+  {
+    "id": "070c9830-bb75-489f-acfc-0c81d7d63867",
+    "product_article": "15627",
+    "printer_name": "Тестовый принтер",
+    "name": "Тестовый DM",
+    "print_code": "^XA^PW1100\n^LL1100\n^CI28\n~SD14\n^PR10\n^FO50,100 ^BXN,5,200,,,,\\,1 ^FD{datamatrix}^FS\n\n^XZ",
+    "is_active": true,
+    "uip_include_batch": false,
+    "is_print_gtin_unit": true
+  },
+  {
+    "id": "add889c1-22a5-498b-a65f-9fc6fd86803b",
+    "product_article": "15644",
+    "printer_name": "Тестовый принтер",
+    "name": "Тестовый DM",
+    "print_code": "^XA^PW1100\n^LL1100\n^CI28\n~SD14\n^PR10\n^FO50,100 ^BXN,5,200,,,,\\,1 ^FD{datamatrix}^FS\n\n^XZ",
+    "is_active": true,
+    "uip_include_batch": false,
+    "is_print_gtin_unit": true
+  },
+  {
+    "id": "f06ce43e-385f-4dc7-96ff-f00652912c68",
+    "product_article": "15658",
+    "printer_name": "Тестовый принтер",
+    "name": "Тестовый DM",
+    "print_code": "^XA^PW1100\n^LL1100\n^CI28\n~SD14\n^PR10\n^FO50,100 ^BXN,5,200,,,,\\,1 ^FD{datamatrix}^FS\n\n^XZ",
+    "is_active": true,
+    "uip_include_batch": false,
+    "is_print_gtin_unit": true
+  },
+  {
+    "id": "14a5d54f-d388-440e-9b1a-f915b2eff980",
+    "product_article": "TEST-DM-UUID",
+    "printer_name": "Тестовый принтер",
+    "name": "Тестовый DM",
+    "print_code": "^XA^PW1100\n^LL1100\n^CI28\n~SD14\n^PR10\n^FO50,100 ^BXN,5,200,,,,\\,1 ^FD{datamatrix}^FS\n\n^XZ",
+    "is_active": true,
+    "uip_include_batch": false,
+    "is_print_gtin_unit": true
+  }
+]

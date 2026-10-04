@@ -38,6 +38,15 @@ DATAMATRIX_SERVICE_URL = os.getenv('DATAMATRIX_SERVICE_URL', '').strip().rstrip(
 DATAMATRIX_SERVICE_TOKEN = os.getenv('DATAMATRIX_SERVICE_TOKEN', '').strip()
 DATAMATRIX_SERVICE_TIMEOUT = float(os.getenv('DATAMATRIX_SERVICE_TIMEOUT', '10'))
 
+# Базовый адрес сервиса кодов по UUID продукта (СУЗ/СУП).
+# По умолчанию — локальный сервис маркировки.
+CODES_SERVICE_URL = os.getenv('CODES_SERVICE_URL', 'http://127.0.0.1:8000').strip().rstrip('/')
+CODES_SERVICE_TOKEN = os.getenv('CODES_SERVICE_TOKEN', DATAMATRIX_SERVICE_TOKEN).strip()
+CODES_SERVICE_TIMEOUT = float(os.getenv('CODES_SERVICE_TIMEOUT', '10'))
+
+# Путь метода выдачи кодов по UUID продукта.
+CODES_BY_UUID_PATH = '/codes/api/get_codes_for_printer_by_product_uuid/'
+
 
 class DatamatrixServiceError(Exception):
     """Ошибка обращения к внешнему сервису DataMatrix."""
@@ -114,4 +123,84 @@ async def fetch_datamatrix_codes(
 
     codes = _extract_codes(data)
     logger.info('Сервис DataMatrix вернул %d кодов', len(codes))
+    return codes
+
+
+async def fetch_datamatrix_codes_by_uuid(
+    *,
+    external_uuid: str,
+    amount_codes: int,
+    issued: bool = False,
+) -> List[str]:
+    """Запросить коды DataMatrix у внешнего сервиса по UUID продукта.
+
+    Обращается к GET-методу ``/codes/api/get_codes_for_printer_by_product_uuid/``
+    (``uuid_product``, ``amount_codes``, при необходимости ``issued=1``).
+
+    Возвращает список кодов (может быть пустым, если свободных кодов нет).
+    При недоступности сервиса, некорректном ответе или ошибке на стороне
+    сервиса (``is_error``) поднимает :class:`DatamatrixServiceError`.
+    """
+    external_uuid = (external_uuid or '').strip()
+    if not external_uuid:
+        raise DatamatrixServiceError(
+            'Не задан UUID продукта во внешнем сервисе — невозможно '
+            'запросить коды DataMatrix'
+        )
+    if amount_codes <= 0:
+        return []
+
+    url = CODES_SERVICE_URL + CODES_BY_UUID_PATH
+    params = {'uuid_product': external_uuid, 'amount_codes': int(amount_codes)}
+    if issued:
+        params['issued'] = '1'
+
+    headers = {'Accept': 'application/json'}
+    if CODES_SERVICE_TOKEN:
+        headers['Authorization'] = f'Bearer {CODES_SERVICE_TOKEN}'
+
+    logger.info(
+        'Запрос %d кодов DataMatrix по UUID %s: %s',
+        amount_codes, external_uuid, url,
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=CODES_SERVICE_TIMEOUT) as client:
+            response = await client.get(url, params=params, headers=headers)
+    except httpx.RequestError as e:
+        raise DatamatrixServiceError(
+            f'Не удалось связаться с сервисом кодов по UUID: {e}'
+        ) from e
+
+    if response.status_code >= 400:
+        # Сервис отдаёт понятное сообщение в JSON (например, для 404).
+        message = None
+        try:
+            body = response.json()
+            if isinstance(body, dict):
+                message = body.get('message')
+        except ValueError:
+            message = None
+        if response.status_code == 404 and not message:
+            message = f'Продукт с UUID {external_uuid} не найден во внешнем сервисе'
+        raise DatamatrixServiceError(
+            message or f'Сервис кодов вернул HTTP {response.status_code}'
+        )
+
+    try:
+        data = response.json()
+    except ValueError as e:
+        raise DatamatrixServiceError(
+            f'Сервис кодов по UUID вернул некорректный ответ: {e}'
+        ) from e
+
+    if isinstance(data, dict) and data.get('is_error'):
+        raise DatamatrixServiceError(
+            data.get('message') or 'Сервис кодов вернул ошибку'
+        )
+
+    codes = _extract_codes(data)
+    logger.info(
+        'Сервис кодов по UUID %s вернул %d кодов', external_uuid, len(codes),
+    )
     return codes

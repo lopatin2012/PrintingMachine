@@ -1,0 +1,112 @@
+[
+  {
+    "id": "2b1f9598-6157-4277-8185-1ecfce1d5067",
+    "article": "13522",
+    "name": "Йогурт с клубникой Фруате 125г 2,5% ванночка ВО (6)",
+    "gtin": "04601751014559",
+    "gtin_unit": "04601751014559",
+    "external_uuid": "01a056c0-b6d3-7522-af7a-95349edca6d6",
+    "other_codes_1c": null,
+    "date_expiration": 25
+  },
+  {
+    "id": "b5cbdf9a-791c-4881-8887-7b5d2fe2e31e",
+    "article": "13524",
+    "name": "Йогурт с персиком Фруате 125г 2,5% ванночка ВО (6)",
+    "gtin": "04601751014573",
+    "gtin_unit": "04601751014573",
+    "external_uuid": "01a056c0-b675-7352-92ce-619a425395de",
+    "other_codes_1c": null,
+    "date_expiration": 25
+  },
+  {
+    "id": "c57e0ca7-b82c-4783-b5e1-016746410121",
+    "article": "13526",
+    "name": "Йогурт с черникой Фруате 125г 2,5% ванночка ВО (6)",
+    "gtin": "04601751014597",
+    "gtin_unit": "04601751014597",
+    "external_uuid": "01a056c0-b732-7912-856d-f968f1a9a58e",
+    "other_codes_1c": null,
+    "date_expiration": 25
+  },
+  {
+    "id": "4fda6fd2-4f7d-48c5-93d1-c99fc31fb358",
+    "article": "15617",
+    "name": "Творог мягкий с изюмом Вкуснотеево 175г 5% ванночка ВО (6)",
+    "gtin": "04601751020536",
+    "gtin_unit": "04601751020529",
+    "external_uuid": "01a056c0-b6fe-7852-9dfd-63c59de47c46",
+    "other_codes_1c": null,
+    "date_expiration": 25
+  },
+  {
+    "id": "c76076f9-e960-4f5f-978e-3b9e9cb409e7",
+    "article": "15621",
+    "name": "Творог мягкий Вкуснотеево 175г 5% ванночка ВО (6)",
+    "gtin": "04601751020505",
+    "gtin_unit": "04601751020505",
+    "external_uuid": "01a056c0-b6bf-7e53-95de-bfeff7aaeef2",
+    "other_codes_1c": null,
+    "date_expiration": 25
+  },
+  {
+    "id": "119bdc33-dd85-46cb-b571-43cc3745a8b4",
+    "article": "15623",
+    "name": "Творог мягкий с шоколадной крошкой Вкуснотеево 120г 4,5% ванночка ВО (6) 15623",
+    "gtin": "04601751025746",
+    "gtin_unit": "04601751025746",
+    "external_uuid": "01a03dd4-5e12-7332-a84e-65904842704f",
+    "other_codes_1c": null,
+    "date_expiration": 25
+  },
+  {
+    "id": "c0c97c35-ba9f-4a48-84b7-c41302e511ce",
+    "article": "15625",
+    "name": "Творог мягкий с изюмом Вкуснотеево 120г 5% ванночка ВО (6)",
+    "gtin": "04601751026972",
+    "gtin_unit": "04601751025777",
+    "external_uuid": "01a03dd4-5e1a-75c0-8f0e-a19f1ae2bf0a",
+    "other_codes_1c": null,
+    "date_expiration": 25
+  },
+  {
+    "id": "85ff5fce-aecd-4bf6-a455-a270b3aa5280",
+    "article": "15627",
+    "name": "Творог мягкий с вишней и черешней Вкуснотеево 120г 5% ванночка ВО (6)",
+    "gtin": "04601751025739",
+    "gtin_unit": "04601751025739",
+    "external_uuid": "01a03dd4-5e09-7252-9a2c-20aa0171973e",
+    "other_codes_1c": null,
+    "date_expiration": 25
+  },
+  {
+    "id": "f67b2074-c949-434c-b9a5-1cc711213945",
+    "article": "15644",
+    "name": "Творог мягкий с малиной Вкуснотеево 120г 5% ванночка ВО (6)",
+    "gtin": "04601751028662",
+    "gtin_unit": "04601751028662",
+    "external_uuid": "01a03dd4-5fab-7fa3-a1ea-3ba4d8d80d6f",
+    "other_codes_1c": null,
+    "date_expiration": 25
+  },
+  {
+    "id": "0ea0caff-b4ba-4531-9001-5f3d663426e7",
+    "article": "15658",
+    "name": "Творог мягкий Вкуснотеево 5% 120г ванночка",
+    "gtin": "04601751029362",
+    "gtin_unit": "04601751029232",
+    "external_uuid": "01a03dd4-6009-79d3-b74c-9d1c7d336571",
+    "other_codes_1c": null,
+    "date_expiration": 25
+  },
+  {
+    "id": "75f1879a-e0ab-43bd-8e9a-9827d138ec5f",
+    "article": "TEST-DM-UUID",
+    "name": "Тестовый DM",
+    "gtin": "04609990000011",
+    "gtin_unit": "04609990000011",
+    "external_uuid": "11111111-2222-3333-4444-555555555555",
+    "other_codes_1c": null,
+    "date_expiration": 30
+  }
+]

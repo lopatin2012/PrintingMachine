@@ -580,47 +580,29 @@ class _ZplRenderer:
         y = (self.origin_y + self.label_home_y) * self.scale
         self.image.paste(tmp, (int(x), int(y)), tmp)
 
-    @staticmethod
-    def _detect_module_px(img: Image.Image) -> int:
-        """Размер модуля DataMatrix в пикселях (по верхней чередующейся рамке)."""
-        row = [img.getpixel((x, 0)) for x in range(img.width)]
-        runs = []
-        cur, n = row[0], 1
-        for v in row[1:]:
-            if v == cur:
-                n += 1
-            else:
-                runs.append(n)
-                cur, n = v, 1
-        runs.append(n)
-        return min(runs)
-
     def _draw_datamatrix(self, orient: str, rest: list[str], data: str) -> None:
+        """DataMatrix рисует собственный локальный рендерер (без Labelary).
+
+        ``rest[0]`` — размер модуля (``h`` в ``^BXo,h,s,...``); поворот
+        выполняется в самом рендерере через параметр ориентации.
+        """
         cell_dots = _parse_int(rest[0], 6) if rest else 6
-        if cell_dots <= 4:  # плотность 0..3 вместо размера ячейки
+        if cell_dots <= 0:
             cell_dots = 6
         cell_px = max(1, int(cell_dots * self.scale))
 
         tmp = None
-        if HAS_DMTX and data:
+        if data:
             try:
-                enc = _dmtx_encode(data)
-                raw = Image.frombytes(
-                    'RGB', (enc.width, enc.height), enc.pixels
-                ).convert('L')
-                # getbbox в режиме 'L' считает фоном 0 (чёрный) — инвертируем,
-                # чтобы получить рамку именно штрихкода.
-                black_bbox = raw.point(lambda p: 255 - p).getbbox()
-                if black_bbox:
-                    raw = raw.crop(black_bbox)
-                module = self._detect_module_px(raw)
-                w_mods = max(1, raw.width // module) if module else raw.width
-                h_mods = max(1, raw.height // module) if module else raw.height
-                tmp = raw.resize(
-                    (w_mods * cell_px, h_mods * cell_px), Image.NEAREST
+                from services.datamatrix_renderer import render_datamatrix_image
+
+                tmp = render_datamatrix_image(
+                    data, module_px=cell_px, quiet_zone=1, orient=orient,
                 ).convert('RGBA')
             except Exception as e:
-                logger.warning('DataMatrix не закодирован (%s) — плейсхолдер', e)
+                logger.warning(
+                    'DataMatrix не отрисован локально (%s) — плейсхолдер', e,
+                )
 
         if tmp is None:
             # Плейсхолдер: квадрат с подписью.
@@ -631,10 +613,7 @@ class _ZplRenderer:
             font = _get_font(max(10, int(10 * self.scale)))
             tdraw.text((side // 2, side // 2), 'DM', font=font, fill='black',
                        anchor='mm')
-
-        deg = ORIENT_DEG.get(orient, 0)
-        if deg:
-            tmp = tmp.rotate(-deg, expand=True)
+        # Ориентация N/R/I/B уже применена рендерером (render_datamatrix_image).
 
         x = (self.origin_x + self.label_home_x) * self.scale
         y = (self.origin_y + self.label_home_y) * self.scale

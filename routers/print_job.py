@@ -1,12 +1,13 @@
 # routers/print_job.py
 
+import asyncio
 import logging
 from datetime import date, timedelta
 from typing import Optional
 from urllib.parse import quote
 from uuid import UUID
 
-from fastapi import APIRouter, Request, Depends, HTTPException, status, Form, Query
+from fastapi import APIRouter, Request, Depends, HTTPException, status, Form, Query, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, func
@@ -21,9 +22,15 @@ from crud.code_template import CodeTemplateCRUD
 from schemas import PrintJobCreate
 from models import User, Workshop, Line, PrintJob, WorkshopUser, Product, Printer, CodeTemplate
 from services.print_queue import PrintTask
-from services.datamatrix_service import DatamatrixServiceError, fetch_datamatrix_codes
+from services.datamatrix_service import (
+    DatamatrixServiceError,
+    fetch_datamatrix_codes,
+    fetch_datamatrix_codes_by_uuid,
+)
 from helpers.printer_drivers import printer_type_label
 from helpers.printers import build_product_zpl
+from services.codes_pdf import build_codes_pdf, printer_dpi
+from services.datamatrix_renderer import module_dots_from_zpl
 
 from templates_config import templates
 from security import get_current_user
@@ -179,21 +186,30 @@ async def start_printing(
     expiration_date = marking_date + timedelta(days=product.date_expiration)
     boxes_count = last_box - first_box + 1
 
-    # ── DataMatrix из внешнего сервиса ────────────────────────────────────────
-    # Если в шаблоне включён флаг is_print_gtin_unit — запрашиваем список кодов
-    # DataMatrix для партии. Кодов нет или их меньше, чем коробок — печать
-    # отменяется с сообщением об ошибке.
+    # ── DataMatrix из внешнего сервиса (по UUID продукта) ─────────────────────
+    # Если в шаблоне включён флаг is_print_gtin_unit — запрашиваем коды
+    # DataMatrix у внешнего сервиса по UUID продукта (product.external_uuid).
+    # На каждую печатаемую этикетку (коробку) подставляется свой код из списка.
+    # Если коды не вернулись или их меньше, чем коробок — печатаем
+    # предупреждение и отменяем задание, чтобы не печатать пустые DataMatrix.
     datamatrix_codes: list = []
     if template.is_print_gtin_unit:
+        external_uuid = (product.external_uuid or '').strip()
+        if not external_uuid:
+            msg = (
+                f'У продукта "{product.name}" не задан UUID внешнего сервиса '
+                f'кодов — печать DataMatrix невозможна. Укажите UUID в карточке '
+                f'продукта.'
+            )
+            logger.warning('Печать отменена (%s): %s', current_user.login, msg)
+            return RedirectResponse(
+                url=f'/printing?error={quote(msg)}',
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
         try:
-            datamatrix_codes = await fetch_datamatrix_codes(
-                product_article=product.article,
-                gtin_unit=product.gtin_unit or '',
-                batch_number=batch_number.strip(),
-                marking_date=marking_date,
-                first_box=first_box,
-                last_box=last_box,
-                boxes_count=boxes_count,
+            datamatrix_codes = await fetch_datamatrix_codes_by_uuid(
+                external_uuid=external_uuid,
+                amount_codes=boxes_count,
             )
         except DatamatrixServiceError as e:
             logger.warning('Печать отменена (%s): %s', current_user.login, e)
@@ -201,10 +217,22 @@ async def start_printing(
                 url=f'/printing?error={quote(str(e))}',
                 status_code=status.HTTP_303_SEE_OTHER,
             )
+        if not datamatrix_codes:
+            msg = (
+                f'Предупреждение: внешний сервис не вернул DataMatrix-коды для '
+                f'продукта "{product.name}" (UUID {external_uuid}). '
+                f'Печать отменена — коды отсутствуют.'
+            )
+            logger.warning('Печать отменена (%s): %s', current_user.login, msg)
+            return RedirectResponse(
+                url=f'/printing?error={quote(msg)}',
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
         if len(datamatrix_codes) < boxes_count:
             msg = (
-                f'Сервис DataMatrix вернул {len(datamatrix_codes)} кодов, '
-                f'требуется {boxes_count} — печать отменена'
+                f'Предупреждение: получено {len(datamatrix_codes)} '
+                f'DataMatrix-кодов, требуется {boxes_count} — печать отменена, '
+                f'кодов недостаточно.'
             )
             logger.warning('Печать отменена (%s): %s', current_user.login, msg)
             return RedirectResponse(
@@ -212,8 +240,9 @@ async def start_printing(
                 status_code=status.HTTP_303_SEE_OTHER,
             )
         logger.info(
-            'Шаблон %s требует DataMatrix: получено %d кодов (партия %s)',
-            template.name, len(datamatrix_codes), batch_number,
+            'Шаблон %s требует DataMatrix: получено %d кодов по UUID %s '
+            '(партия %s)',
+            template.name, len(datamatrix_codes), external_uuid, batch_number,
         )
 
     print_job_data = PrintJobCreate(
@@ -654,6 +683,139 @@ async def get_templates_for_product(
             for t in templates
         ]
     }
+
+@router.get('/api/printing/codes/pdf')
+async def download_codes_pdf(
+        product_id: UUID,
+        amount: int = Query(1, ge=1, le=5000, description='Сколько кодов выгрузить'),
+        template_id: Optional[UUID] = Query(
+            None, description='Шаблон, по которому определяется размер DataMatrix',
+        ),
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_user),
+):
+    """Скачать DataMatrix-коды продукта (по его внешнему UUID) в PDF.
+
+    Коды запрашиваются у внешнего сервиса по `Product.external_uuid` и там же
+    помечаются выданными (``send_printer``) — как при печати. На каждый код
+    формируется страница PDF с изображением DataMatrix и текстом кода.
+    """
+    product = await product_crud.get(db, product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail='Продукт не найден')
+
+    external_uuid = (product.external_uuid or '').strip()
+    if not external_uuid:
+        raise HTTPException(
+            status_code=400,
+            detail=f'У продукта "{product.name}" не задан UUID внешнего сервиса кодов',
+        )
+
+    # Доступ: продукт должен иметь активный шаблон на доступном принтере.
+    workshop_access = await db.execute(
+        select(WorkshopUser).where(
+            WorkshopUser.user_id == current_user.id,
+            WorkshopUser.is_active == True,
+        )
+    )
+    user_workshops = workshop_access.scalars().all()
+    if not user_workshops:
+        raise HTTPException(status_code=403, detail='У вас нет доступа к цехам')
+
+    workshop_ids = [wu.workshop_id for wu in user_workshops]
+    line_ids = [wu.line_id for wu in user_workshops if wu.line_id]
+    workshops_result = await db.execute(
+        select(Workshop).where(Workshop.id.in_(workshop_ids))
+    )
+    has_all_workshops = any(
+        w.name == 'Все цеха' for w in workshops_result.scalars().all()
+    )
+
+    printer_query = select(Printer.id).join(Line, Printer.line_id == Line.id)
+    if not has_all_workshops:
+        if line_ids:
+            printer_query = printer_query.where(Line.id.in_(line_ids))
+        else:
+            printer_query = printer_query.where(Line.workshop_id.in_(workshop_ids))
+    accessible_printer_ids = (await db.execute(printer_query)).scalars().all()
+    if not accessible_printer_ids:
+        raise HTTPException(status_code=403, detail='Нет доступных принтеров')
+
+    # Шаблон нужен, чтобы взять размер модуля DataMatrix (как при печати).
+    # Если передан template_id — берём его, иначе активный шаблон продукта
+    # на доступном принтере.
+    template = None
+    if template_id:
+        template = (await db.execute(
+            select(CodeTemplate)
+            .options(selectinload(CodeTemplate.printer))
+            .where(CodeTemplate.id == template_id)
+        )).scalar_one_or_none()
+        if template and template.product_id != product_id:
+            template = None
+    if template is None:
+        template = (await db.execute(
+            select(CodeTemplate)
+            .options(selectinload(CodeTemplate.printer))
+            .where(
+                CodeTemplate.product_id == product_id,
+                CodeTemplate.is_active == True,
+                CodeTemplate.printer_id.in_(accessible_printer_ids),
+            )
+            .order_by(desc(CodeTemplate.created_at))
+            .limit(1)
+        )).scalar_one_or_none()
+    if template is None:
+        raise HTTPException(status_code=403, detail='Продукт недоступен для печати')
+
+    try:
+        codes = await fetch_datamatrix_codes_by_uuid(
+            external_uuid=external_uuid, amount_codes=amount,
+        )
+    except DatamatrixServiceError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    if not codes:
+        raise HTTPException(
+            status_code=404,
+            detail=f'Внешний сервис не вернул DataMatrix-коды для продукта "{product.name}"',
+        )
+
+    # Размер символа — как при печати: модуль из ^BX шаблона, разрешение
+    # принтера (Zebra/TSC, по умолчанию 203 dpi).
+    module_dots = module_dots_from_zpl(template.print_code)
+    printer_type = template.printer.printer_type if template.printer else 'zebra'
+    dpi = printer_dpi(printer_type)
+
+    try:
+        pdf_bytes = await asyncio.to_thread(
+            build_codes_pdf, codes,
+            module_dots=module_dots,
+            dpi=dpi,
+            product_name=product.name,
+            gtin=product.gtin_unit or product.gtin or '',
+        )
+    except Exception as e:
+        logger.exception('Ошибка формирования PDF с кодами')
+        raise HTTPException(
+            status_code=500, detail=f'Не удалось сформировать PDF: {e}',
+        )
+
+    safe_article = (product.article or 'product').replace(' ', '_')
+    filename = f'codes_{safe_article}_{len(codes)}.pdf'
+    logger.info(
+        'Сформирован PDF с %d кодами DataMatrix (%s) пользователем %s',
+        len(codes), filename, current_user.login,
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type='application/pdf',
+        headers={
+            'Content-Disposition': f'attachment; filename="{filename}"',
+            'X-Codes-Count': str(len(codes)),
+        },
+    )
+
 
 async def _build_zpl_response(
         db: AsyncSession,

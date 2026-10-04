@@ -137,6 +137,7 @@
                     <th>Артикул</th>
                     <th>Групповой GTIN</th>
                     <th>GTIN единицы</th>
+                    <th>UUID внешнего сервиса</th>
                     <th>Срок годности</th>
                     <th>Шаблонов</th>
                     <th>Дата создания</th>
@@ -151,7 +152,7 @@
                 <tr data-gtin="{{ product.gtin }}"
                     data-gtin-unit="{{ product.gtin_unit or '' }}"
                     data-expiration="{{ product.date_expiration }}"
-                    data-search="{{ product.name|lower }} {{ product.article|lower }} {{ product.gtin|lower }} {{ product.gtin_unit|lower if product.gtin_unit else '' }}">
+                    data-search="{{ product.name|lower }} {{ product.article|lower }} {{ product.gtin|lower }} {{ product.gtin_unit|lower if product.gtin_unit else '' }} {{ product.external_uuid|lower if product.external_uuid else '' }}">
                     {# Нумерация с учётом пагинации #}
                     <td>{{ (page - 1) * per_page + loop.index }}</td>
                     <td>
@@ -173,6 +174,13 @@
                         <span class="code-badge muted">—</span>
                         {% endif %}
                     </td>
+                    <td class="code-cell">
+                        {% if product.external_uuid %}
+                        <span class="code-badge" title="UUID внешнего сервиса (DataMatrix): {{ product.external_uuid }}">{{ product.external_uuid }}</span>
+                        {% else %}
+                        <span class="code-badge muted">—</span>
+                        {% endif %}
+                    </td>
                     <td>
                         <span class="expiration-badge
                             {% if product.date_expiration < 7 %}critical
@@ -190,7 +198,7 @@
                     {% if user and user.role and user.role.is_admin %}
                     <td class="actions-cell">
                         <button class="table-btn edit-btn"
-                                onclick='editProduct({{ product.id|string|tojson|safe }}, {{ product.name|tojson|safe }}, {{ product.article|tojson|safe }}, {{ product.gtin|tojson|safe }}, {{ (product.gtin_unit or "")|tojson|safe }}, {{ product.other_codes_1c|tojson|safe if product.other_codes_1c else "null"|tojson|safe }}, {{ product.date_expiration }})'>
+                                onclick='editProduct({{ product.id|string|tojson|safe }}, {{ product.name|tojson|safe }}, {{ product.article|tojson|safe }}, {{ product.gtin|tojson|safe }}, {{ (product.gtin_unit or "")|tojson|safe }}, {{ (product.external_uuid or "")|tojson|safe }}, {{ product.other_codes_1c|tojson|safe if product.other_codes_1c else "null"|tojson|safe }}, {{ product.date_expiration }})'>
                             ✏️ Редактировать
                         </button>
                         <button class="table-btn delete-btn"
@@ -207,7 +215,7 @@
                 {% endfor %}
                 {% else %}
                 <tr>
-                    <td colspan="8" class="empty-row">📦 Нет продуктов по заданным критериям</td>
+                    <td colspan="10" class="empty-row">📦 Нет продуктов по заданным критериям</td>
                 </tr>
                 {% endif %}
             </tbody>
@@ -299,6 +307,24 @@
                 </div>
 
                 <div class="form-group">
+                    <label for="productExternalUuid" class="form-label">
+                        <span class="label-icon">🔗</span>
+                        UUID внешнего сервиса кодов (для DataMatrix)
+                    </label>
+                    <div class="input-wrapper">
+                        <input
+                            type="text"
+                            id="productExternalUuid"
+                            name="external_uuid"
+                            class="form-input"
+                            placeholder="например: 11111111-2222-3333-4444-555555555555"
+                            maxlength="100"
+                        >
+                    </div>
+                    <small class="form-hint">По этому UUID при печати запрашиваются DataMatrix-коды (плейсхолдер {datamatrix})</small>
+                </div>
+
+                <div class="form-group">
                     <label for="productOtherCodes" class="form-label">
                         <span class="label-icon">📎</span>
                         Другие коды 1С
@@ -377,13 +403,14 @@ function openAddProductForm() {
     document.getElementById('productArticle').value = '';
     document.getElementById('productGtin').value = '';
     document.getElementById('productGtinUnit').value = '';
+    document.getElementById('productExternalUuid').value = '';
     document.getElementById('productOtherCodes').value = '';
     document.getElementById('productExpiration').value = '180';
     document.getElementById('productFormModal').classList.remove('hidden');
 }
 
 // Открыть форму редактирования
-function editProduct(id, name, article, gtin, gtinUnit, otherCodes, expiration) {
+function editProduct(id, name, article, gtin, gtinUnit, externalUuid, otherCodes, expiration) {
     document.getElementById('formTitle').textContent = '✏️ Редактировать продукт';
     document.getElementById('formSubmitText').textContent = 'Сохранить изменения';
     document.getElementById('productForm').action = `/products/${id}`;
@@ -392,6 +419,7 @@ function editProduct(id, name, article, gtin, gtinUnit, otherCodes, expiration) 
     document.getElementById('productArticle').value = article.trim();
     document.getElementById('productGtin').value = gtin.trim();
     document.getElementById('productGtinUnit').value = gtinUnit ? gtinUnit.trim() : '';
+    document.getElementById('productExternalUuid').value = externalUuid ? externalUuid.trim() : '';
     document.getElementById('productOtherCodes').value = otherCodes && otherCodes !== 'null' ? otherCodes.trim() : '';
     document.getElementById('productExpiration').value = expiration;
     document.getElementById('productFormModal').classList.remove('hidden');
