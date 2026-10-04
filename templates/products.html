@@ -137,7 +137,6 @@
                     <th>Артикул</th>
                     <th>Групповой GTIN</th>
                     <th>GTIN единицы</th>
-                    <th>UUID внешнего сервиса</th>
                     <th>Срок годности</th>
                     <th>Шаблонов</th>
                     <th>Дата создания</th>
@@ -170,13 +169,6 @@
                     <td class="code-cell">
                         {% if product.gtin_unit %}
                         <span class="code-badge gtin-unit" title="{{ product.gtin_unit }}">{{ product.gtin_unit }}</span>
-                        {% else %}
-                        <span class="code-badge muted">—</span>
-                        {% endif %}
-                    </td>
-                    <td class="code-cell">
-                        {% if product.external_uuid %}
-                        <span class="code-badge" title="UUID внешнего сервиса (DataMatrix): {{ product.external_uuid }}">{{ product.external_uuid }}</span>
                         {% else %}
                         <span class="code-badge muted">—</span>
                         {% endif %}
@@ -215,7 +207,7 @@
                 {% endfor %}
                 {% else %}
                 <tr>
-                    <td colspan="10" class="empty-row">📦 Нет продуктов по заданным критериям</td>
+                    <td colspan="9" class="empty-row">📦 Нет продуктов по заданным критериям</td>
                 </tr>
                 {% endif %}
             </tbody>
