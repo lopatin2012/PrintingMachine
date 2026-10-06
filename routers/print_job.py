@@ -30,6 +30,7 @@ from services.datamatrix_service import (
 from helpers.printer_drivers import printer_type_label
 from helpers.printers import build_product_zpl
 from services.codes_pdf import build_codes_pdf, printer_dpi
+from services.codes_text import build_codes_text
 from services.datamatrix_renderer import module_dots_from_zpl
 
 from templates_config import templates
@@ -684,21 +685,22 @@ async def get_templates_for_product(
         ]
     }
 
-@router.get('/api/printing/codes/pdf')
-async def download_codes_pdf(
-        product_id: UUID,
-        amount: int = Query(1, ge=1, le=5000, description='Сколько кодов выгрузить'),
-        template_id: Optional[UUID] = Query(
-            None, description='Шаблон, по которому определяется размер DataMatrix',
-        ),
-        db: AsyncSession = Depends(get_db),
-        current_user: User = Depends(get_current_user),
-):
-    """Скачать DataMatrix-коды продукта (по его внешнему UUID) в PDF.
 
-    Коды запрашиваются у внешнего сервиса по `Product.external_uuid` и там же
-    помечаются выданными (``send_printer``) — как при печати. На каждый код
-    формируется страница PDF с изображением DataMatrix и текстом кода.
+async def _load_codes_for_download(
+        db: AsyncSession,
+        product_id: UUID,
+        *,
+        amount: int,
+        template_id: Optional[UUID],
+        current_user: User,
+):
+    """Общая часть выгрузок кодов: доступ, шаблон и сами коды DataMatrix.
+
+    Проверяет, что у продукта задан UUID внешнего сервиса, что пользователь
+    имеет доступ к принтеру с активным шаблоном продукта, выбирает шаблон
+    (переданный ``template_id`` либо свежайший активный на доступном принтере)
+    и запрашивает коды у внешнего сервиса. Возвращает
+    ``(product, template, codes)``.
     """
     product = await product_crud.get(db, product_id)
     if not product:
@@ -781,6 +783,29 @@ async def download_codes_pdf(
             detail=f'Внешний сервис не вернул DataMatrix-коды для продукта "{product.name}"',
         )
 
+    return product, template, codes
+
+
+@router.get('/api/printing/codes/pdf')
+async def download_codes_pdf(
+        product_id: UUID,
+        amount: int = Query(1, ge=1, le=5000, description='Сколько кодов выгрузить'),
+        template_id: Optional[UUID] = Query(
+            None, description='Шаблон, по которому определяется размер DataMatrix',
+        ),
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_user),
+):
+    """Скачать DataMatrix-коды продукта (по его внешнему UUID) в PDF.
+
+    Коды запрашиваются у внешнего сервиса по `Product.external_uuid` — как при
+    печати. На каждый код формируется страница PDF с изображением DataMatrix.
+    """
+    product, template, codes = await _load_codes_for_download(
+        db, product_id, amount=amount, template_id=template_id,
+        current_user=current_user,
+    )
+
     # Размер символа — как при печати: модуль из ^BX шаблона, разрешение
     # принтера (Zebra/TSC, по умолчанию 203 dpi).
     module_dots = module_dots_from_zpl(template.print_code)
@@ -810,6 +835,44 @@ async def download_codes_pdf(
     return Response(
         content=pdf_bytes,
         media_type='application/pdf',
+        headers={
+            'Content-Disposition': f'attachment; filename="{filename}"',
+            'X-Codes-Count': str(len(codes)),
+        },
+    )
+
+
+@router.get('/api/printing/codes/txt')
+async def download_codes_txt(
+        product_id: UUID,
+        amount: int = Query(1, ge=1, le=5000, description='Сколько кодов выгрузить'),
+        template_id: Optional[UUID] = Query(
+            None, description='Шаблон, к которому привязан продукт',
+        ),
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_user),
+):
+    """Скачать DataMatrix-коды продукта (по его внешнему UUID) в текстовый файл.
+
+    Один код на строку. Коды запрашиваются у внешнего сервиса по
+    `Product.external_uuid` — как при печати. Вызывается автоматически при
+    запуске печати DataMatrix-этикеток.
+    """
+    product, _template, codes = await _load_codes_for_download(
+        db, product_id, amount=amount, template_id=template_id,
+        current_user=current_user,
+    )
+
+    text = build_codes_text(codes)
+    safe_article = (product.article or 'product').replace(' ', '_')
+    filename = f'codes_{safe_article}_{len(codes)}.txt'
+    logger.info(
+        'Сформирован текстовый файл с %d кодами DataMatrix (%s) пользователем %s',
+        len(codes), filename, current_user.login,
+    )
+    return Response(
+        content=text,
+        media_type='text/plain; charset=utf-8',
         headers={
             'Content-Disposition': f'attachment; filename="{filename}"',
             'X-Codes-Count': str(len(codes)),
