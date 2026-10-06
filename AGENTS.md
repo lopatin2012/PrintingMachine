@@ -47,7 +47,7 @@ Single-package FastAPI app — no monorepo, no separate packages.
 - `services/print_queue.py` — Async print queue with retries and printer locking
 - `services/zpl_pil_renderer.py` — Local ZPL→PNG renderer (PIL + python-barcode + pylibdmtx); the offline bottom line, not the default
 - `services/preview_renderer.py` — Preview chain (Labelary → zplr(Node) → PIL); used by `/templates/preview*`. Before external engines it replaces DataMatrix `^BX` fields with `^GF` graphics from `services/datamatrix_renderer.py`
-- `services/datamatrix_renderer.py` — Own DataMatrix (ECC200) renderer: encodes locally (`pylibdmtx`) and draws the symbol / emits ZPL `^GF` (used for preview instead of letting Labelary encode the DM)
+- `services/datamatrix_renderer.py` — Own DataMatrix (ECC200) renderer: encodes locally (`pylibdmtx`) and draws the symbol / emits ZPL `^GF` (used for preview instead of letting Labelary encode the DM). Also `datamatrix_fields_layout()` — parses label size (`^PW`/`^LL`), `^LH` and `^BX` fields to give the template editor the DataMatrix bounding boxes (exported as the `X-DM-Layout` JSON header by `/templates/preview/render`, so the editor can drag the DataMatrix and rewrite its `^FO`)
 - `services/codes_pdf.py` — Builds a multi-page PDF (one page per code) from DataMatrix codes for `GET /api/printing/codes/pdf` (button «Сохранить коды в PDF» on the printing page)
 - `services/codes_text.py` — Builds a plain-text (one code per line) DataMatrix export for `GET /api/printing/codes/txt`; downloaded automatically when a DataMatrix job starts (template flag `is_print_gtin_unit`)
 - `helpers/printers.py` — Placeholder substitution, cyrillic→HEX conversion, TCP send/status helpers (shared by queue + preview)

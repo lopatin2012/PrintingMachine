@@ -246,6 +246,67 @@
     transition: transform 0.3s ease;
 }
 
+/* Обёртка предпросмотра для перетаскивания DataMatrix */
+.preview-image-wrap {
+    position: relative;
+    display: inline-block;
+    line-height: 0;
+    max-width: 100%;
+    min-width: 0;
+    transition: transform 0.3s ease;
+}
+
+/* Рамка DataMatrix (слой поверх изображения) */
+.dm-overlay {
+    position: absolute;
+    box-sizing: border-box;
+    border: 2px dashed #3d478a;
+    background: rgba(61, 71, 138, 0.10);
+    cursor: move;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    z-index: 5;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.dm-overlay:hover {
+    background: rgba(61, 71, 138, 0.20);
+    border-color: #2a316b;
+}
+
+.dm-overlay.dragging {
+    background: rgba(46, 125, 50, 0.22);
+    border-color: #2e7d32;
+    border-style: solid;
+    cursor: grabbing;
+}
+
+.dm-overlay-badge {
+    position: absolute;
+    top: -12px;
+    left: -2px;
+    background: #3d478a;
+    color: #fff;
+    font-size: 10px;
+    line-height: 1;
+    padding: 2px 4px;
+    border-radius: 4px;
+    pointer-events: none;
+    white-space: nowrap;
+}
+
+.dm-overlay.dragging .dm-overlay-badge {
+    background: #2e7d32;
+}
+
+/* При повёрнутом превью перетаскивание отключено */
+.preview-image-wrap.rotation-disabled .dm-overlay {
+    pointer-events: none;
+    opacity: 0.5;
+    cursor: default;
+}
+
 /* Плейсхолдер */
 .preview-placeholder {
     text-align: center;
