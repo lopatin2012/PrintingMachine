@@ -341,6 +341,7 @@ let tooltipHideTimer = null;   // Таймер задержки скрытия
 let currentZplCode    = null;
 let currentTemplateId = null;
 let currentUipIncludeBatch = true;  // флаг «партия в УИП» из шаблона
+let currentIsPrintGtinUnit = false; // флаг «печать DataMatrix» из шаблона
 
 // Специальный пункт внутри списка принтеров — сохранить коды в PDF.
 const PRINTER_SAVE_PDF = '__save_pdf__';
@@ -467,6 +468,7 @@ function loadTemplates(templates) {
         opt.dataset.printerName = t.printer_name;
         opt.dataset.fullName = t.name;
         opt.dataset.uipIncludeBatch = t.uip_include_batch !== false && t.uip_include_batch !== 'false';
+        opt.dataset.isPrintGtinUnit = t.is_print_gtin_unit === true || t.is_print_gtin_unit === 'true';
 
         select.appendChild(opt);
     });
@@ -487,6 +489,9 @@ document.getElementById('templateSelect').addEventListener('change', function() 
     currentTemplateId = this.value;
     // Флаг «партия в УИП» берётся из шаблона (настройка шаблона, не печати).
     currentUipIncludeBatch = selectedOption.dataset.uipIncludeBatch === 'true' || selectedOption.dataset.uipIncludeBatch === true;
+    // Флаг «печать DataMatrix» (is_print_gtin_unit): для таких шаблонов при
+    // печати дополнительно выкачиваем текстовый файл с кодами.
+    currentIsPrintGtinUnit = selectedOption.dataset.isPrintGtinUnit === 'true';
 
     // Обновляем информационные карточки справа
     const nameEl = document.getElementById('templateInfoName');
@@ -776,6 +781,8 @@ function closePrintForm() {
     document.getElementById('expirationDateDisplay').textContent = '—';
     currentZplCode    = null;
     currentTemplateId = null;
+    currentUipIncludeBatch = true;
+    currentIsPrintGtinUnit = false;
 }
 
 // ─── РАСЧЁТЫ ─────────────────────────────────────────────────────────────────
@@ -822,6 +829,15 @@ function setupFormValidation() {
         submitBtn.disabled = true;
         submitBtn.querySelector('.btn-text').textContent = 'Запуск печати...';
         submitBtn.querySelector('.btn-spinner').classList.remove('hidden');
+
+        // Для DataMatrix-этикеток перед печатью выкачиваем текстовый файл
+        // со всеми кодами, которые будут напечатаны (флаг is_print_gtin_unit).
+        if (currentIsPrintGtinUnit) {
+            e.preventDefault();
+            // Небольшая пауза перед отправкой формы, чтобы браузер успел
+            // начать скачивание файла до перехода на страницу результата.
+            downloadCodesTxt().finally(() => setTimeout(() => form.submit(), 500));
+        }
     });
 }
 
@@ -1044,6 +1060,58 @@ async function downloadCodesPdf() {
         URL.revokeObjectURL(url);
     } catch (err) {
         alert('Ошибка при скачивании PDF: ' + err.message);
+    }
+}
+
+// ─── ВЫГРУЗКА КОДОВ DATAMATRIX В ТЕКСТОВЫЙ ФАЙЛ ─────────────────────────────
+// Вызывается автоматически при запуске печати DataMatrix-этикеток: сохраняет
+// все коды, которые будут напечатаны, в .txt (один код на строку).
+async function downloadCodesTxt() {
+    const productId = document.getElementById('selectedProductId')?.value;
+    if (!productId) {
+        alert('Не удалось определить продукт для выгрузки кодов');
+        return;
+    }
+
+    const firstBox = parseInt(document.getElementById('firstBox')?.value) || 1;
+    const lastBox  = parseInt(document.getElementById('lastBox')?.value)  || firstBox;
+    if (lastBox < firstBox) {
+        alert('Номер последней коробки не может быть меньше первой');
+        return;
+    }
+    const amount = lastBox - firstBox + 1;
+
+    try {
+        const params = new URLSearchParams({ product_id: productId, amount });
+        const templateId = currentTemplateId
+            || document.getElementById('templateSelect')?.value;
+        if (templateId) params.set('template_id', templateId);
+        const resp = await fetch(`/api/printing/codes/txt?${params.toString()}`);
+        if (!resp.ok) {
+            let msg = `Ошибка ${resp.status}`;
+            try {
+                const data = await resp.json();
+                if (data && data.detail) msg = data.detail;
+            } catch (e) { /* не JSON */ }
+            alert('Не удалось скачать коды DataMatrix: ' + msg);
+            return;
+        }
+
+        const blob = await resp.blob();
+        const cd = resp.headers.get('Content-Disposition') || '';
+        const match = cd.match(/filename="?([^";]+)"?/);
+        const filename = match ? match[1] : `codes_${productId}.txt`;
+
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    } catch (err) {
+        alert('Ошибка при скачивании кодов DataMatrix: ' + err.message);
     }
 }
 

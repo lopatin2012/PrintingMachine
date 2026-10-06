@@ -33,7 +33,7 @@ Single-package FastAPI app — no monorepo, no separate packages.
 |---|---|
 | `routers/` | HTTP route handlers |
 | `crud/` | Database CRUD operations |
-| `services/` | Async print queue (`print_queue.py`), ZPL rendering (`zpl_renderer.py`), local ZPL→PNG renderer (`zpl_pil_renderer.py`), preview chain (`preview_renderer.py`), external DataMatrix client (`datamatrix_service.py`), own DataMatrix renderer (`datamatrix_renderer.py`), DataMatrix→PDF export (`codes_pdf.py`) |
+| `services/` | Async print queue (`print_queue.py`), ZPL rendering (`zpl_renderer.py`), local ZPL→PNG renderer (`zpl_pil_renderer.py`), preview chain (`preview_renderer.py`), external DataMatrix client (`datamatrix_service.py`), own DataMatrix renderer (`datamatrix_renderer.py`), DataMatrix→PDF export (`codes_pdf.py`), DataMatrix→TXT export (`codes_text.py`) |
 | `helpers/` | Printer drivers registry, printer TCP comms, response helpers, pagination |
 | `templates/` | Jinja2 HTML templates |
 | `static/` | CSS/JS assets |
@@ -49,6 +49,7 @@ Single-package FastAPI app — no monorepo, no separate packages.
 - `services/preview_renderer.py` — Preview chain (Labelary → zplr(Node) → PIL); used by `/templates/preview*`. Before external engines it replaces DataMatrix `^BX` fields with `^GF` graphics from `services/datamatrix_renderer.py`
 - `services/datamatrix_renderer.py` — Own DataMatrix (ECC200) renderer: encodes locally (`pylibdmtx`) and draws the symbol / emits ZPL `^GF` (used for preview instead of letting Labelary encode the DM)
 - `services/codes_pdf.py` — Builds a multi-page PDF (one page per code) from DataMatrix codes for `GET /api/printing/codes/pdf` (button «Сохранить коды в PDF» on the printing page)
+- `services/codes_text.py` — Builds a plain-text (one code per line) DataMatrix export for `GET /api/printing/codes/txt`; downloaded automatically when a DataMatrix job starts (template flag `is_print_gtin_unit`)
 - `helpers/printers.py` — Placeholder substitution, cyrillic→HEX conversion, TCP send/status helpers (shared by queue + preview)
 - `helpers/printer_drivers.py` — Printer type registry (driver per type: status/clear/restart, batch send, mileage gate, buffer control)
 
