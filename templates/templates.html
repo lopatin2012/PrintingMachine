@@ -792,12 +792,19 @@ function renderPreviewWithParams() {
     })
     .then(response => {
         if (!response.ok) throw new Error(`Ошибка ${response.status}: ${response.statusText}`);
-        return response.blob();
+        // Раскладка DataMatrix для перетаскивания (заголовок от бэкенда).
+        let layout = null;
+        const layoutHeader = response.headers.get('X-DM-Layout');
+        if (layoutHeader) {
+            try { layout = JSON.parse(layoutHeader); }
+            catch (e) { console.warn('Не удалось разобрать X-DM-Layout:', e); }
+        }
+        return response.blob().then(blob => ({ blob, layout }));
     })
-    .then(blob => {
+    .then(({ blob, layout }) => {
         if (previewImageUrl) URL.revokeObjectURL(previewImageUrl);
         previewImageUrl = URL.createObjectURL(blob);
-        showPreviewImage(previewImageUrl);
+        showPreviewImage(previewImageUrl, layout);
         document.getElementById('previewControls').style.display = 'flex';
     })
     .catch(error => {
@@ -812,15 +819,23 @@ function renderPreviewWithParams() {
     });
 }
 
-function showPreviewImage(url) {
+function showPreviewImage(url, layout) {
     document.getElementById('previewContent').innerHTML =
-        `<img src="${url}" class="preview-image" id="previewImage" alt="Предпросмотр этикетки">`;
+        `<div class="preview-image-wrap" id="previewImageWrap">` +
+        `<img src="${url}" class="preview-image" id="previewImage" alt="Предпросмотр этикетки">` +
+        `</div>`;
     applyPreviewRotation();
+    setupDataMatrixDragging(layout);
 }
 
 function applyPreviewRotation() {
-    const img = document.getElementById('previewImage');
-    if (img) img.style.transform = `rotate(${previewRotation}deg)`;
+    const wrap = document.getElementById('previewImageWrap');
+    if (!wrap) return;
+    wrap.style.transform = `rotate(${previewRotation}deg)`;
+    // При повёрнутом превью перетаскивание отключено (рамка вращается вместе
+    // с картинкой, а координаты мыши — в экранной системе).
+    const rotated = ((previewRotation % 360) + 360) % 360 !== 0;
+    wrap.classList.toggle('rotation-disabled', rotated);
 }
 
 function rotatePreview(degrees) {
@@ -831,6 +846,139 @@ function rotatePreview(degrees) {
 function resetPreview() {
     previewRotation = 0;
     applyPreviewRotation();
+}
+
+// ─── ПЕРЕТАСКИВАНИЕ DATAMATRIX В ПРЕВЬЮ ─────────────────────────────────────
+// Рамка вокруг DataMatrix строится по раскладке из заголовка X-DM-Layout.
+// Перетаскивание меняет только координаты ^FO соответствующего поля в ZPL.
+
+/** Регулярное выражение поля DataMatrix (совпадает с бэкендом _DM_FIELD_RE). */
+function dmFieldRegex() {
+    return /\^FO\s*(\d+)\s*,\s*(\d+)[^\^]*\^BX[^\^]*(?:\^FH)?\^FD[\s\S]*?\^FS/g;
+}
+
+function clampFieldCoord(value, homeOffset, labelSize, fieldSize) {
+    const min = -homeOffset;
+    const max = labelSize - fieldSize - homeOffset;
+    if (max < min) return min;
+    return Math.min(max, Math.max(min, value));
+}
+
+/** Позиционирует рамку DataMatrix в процентах от размера этикетки. */
+function positionDataMatrixOverlay(overlay, field, layout) {
+    const labelW = Math.max(1, layout.label_w || 1);
+    const labelH = Math.max(1, layout.label_h || 1);
+    const lhX = layout.lh_x || 0;
+    const lhY = layout.lh_y || 0;
+    const left = Math.min(100, Math.max(0, ((lhX + field.x) / labelW) * 100));
+    const top = Math.min(100, Math.max(0, ((lhY + field.y) / labelH) * 100));
+    overlay.style.left = left + '%';
+    overlay.style.top = top + '%';
+    overlay.style.width = Math.max(0, (field.w / labelW) * 100) + '%';
+    overlay.style.height = Math.max(0, (field.h / labelH) * 100) + '%';
+}
+
+/** Находит index-е поле DataMatrix в ZPL и обновляет у него ^FO x,y. */
+function updateDataMatrixFoInCode(index, x, y) {
+    const textarea = document.getElementById('templateCode');
+    if (!textarea) return false;
+    const src = textarea.value;
+    const re = dmFieldRegex();
+    let i = 0;
+    let match;
+    while ((match = re.exec(src)) !== null) {
+        if (i === index) {
+            const newField = match[0].replace(
+                /^\^FO\s*\d+\s*,\s*\d+/, `^FO${x},${y}`,
+            );
+            textarea.value = src.slice(0, match.index) + newField +
+                             src.slice(match.index + match[0].length);
+            return true;
+        }
+        i++;
+    }
+    return false;
+}
+
+function attachDataMatrixDrag(overlay, field, layout, wrap) {
+    let dragState = null;
+    let moved = false;
+
+    overlay.addEventListener('pointerdown', function (e) {
+        if (((previewRotation % 360) + 360) % 360 !== 0) return;
+        if (e.button !== undefined && e.button !== 0) return;
+        e.preventDefault();
+        const rect = wrap.getBoundingClientRect();
+        moved = false;
+        dragState = {
+            pointerId: e.pointerId,
+            startClientX: e.clientX,
+            startClientY: e.clientY,
+            startX: field.x,
+            startY: field.y,
+            dotsPerPxX: (layout.label_w || 1) / Math.max(1, rect.width),
+            dotsPerPxY: (layout.label_h || 1) / Math.max(1, rect.height),
+        };
+        try { overlay.setPointerCapture(e.pointerId); } catch (err) { /* noop */ }
+        overlay.classList.add('dragging');
+    });
+
+    overlay.addEventListener('pointermove', function (e) {
+        if (!dragState || e.pointerId !== dragState.pointerId) return;
+        e.preventDefault();
+        const dxPx = e.clientX - dragState.startClientX;
+        const dyPx = e.clientY - dragState.startClientY;
+        let nx = Math.round(dragState.startX + dxPx * dragState.dotsPerPxX);
+        let ny = Math.round(dragState.startY + dyPx * dragState.dotsPerPxY);
+        nx = clampFieldCoord(nx, layout.lh_x || 0, layout.label_w || 1, field.w);
+        ny = clampFieldCoord(ny, layout.lh_y || 0, layout.label_h || 1, field.h);
+        if (nx === field.x && ny === field.y) return;
+        moved = true;
+        field.x = nx;
+        field.y = ny;
+        positionDataMatrixOverlay(overlay, field, layout);
+        const badge = overlay.querySelector('.dm-overlay-badge');
+        if (badge) badge.textContent = `DM ${nx},${ny}`;
+        updateDataMatrixFoInCode(field.index, nx, ny);
+    });
+
+    function endDrag(e) {
+        if (!dragState || e.pointerId !== dragState.pointerId) return;
+        dragState = null;
+        overlay.classList.remove('dragging');
+        try { overlay.releasePointerCapture(e.pointerId); } catch (err) { /* noop */ }
+        if (!moved) return;
+        // Перерисовываем превью, чтобы символ сдвинулся и в изображении.
+        const textarea = document.getElementById('templateCode');
+        if (textarea) currentPreviewCode = textarea.value;
+        renderPreviewWithParams();
+    }
+
+    overlay.addEventListener('pointerup', endDrag);
+    overlay.addEventListener('pointercancel', endDrag);
+}
+
+function setupDataMatrixDragging(layout) {
+    const wrap = document.getElementById('previewImageWrap');
+    if (!wrap || !layout || !Array.isArray(layout.fields) || layout.fields.length === 0) {
+        return;
+    }
+
+    layout.fields.forEach(field => {
+        const overlay = document.createElement('div');
+        overlay.className = 'dm-overlay';
+        overlay.dataset.index = String(field.index);
+        overlay.title = 'Перетащите, чтобы изменить позицию DataMatrix (^FO x,y)';
+
+        const badge = document.createElement('span');
+        badge.className = 'dm-overlay-badge';
+        badge.textContent = `DM ${field.x},${field.y}`;
+        overlay.appendChild(badge);
+
+        positionDataMatrixOverlay(overlay, field, layout);
+        wrap.appendChild(overlay);
+        attachDataMatrixDrag(overlay, field, layout, wrap);
+    });
 }
 
 function downloadPreview() {

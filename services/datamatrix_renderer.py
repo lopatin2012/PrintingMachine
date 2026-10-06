@@ -349,6 +349,115 @@ def module_dots_from_zpl(zpl: str, default: int = 4) -> int:
     return _module_from_bx_params(match.group(1), default)
 
 
+# ── Раскладка DataMatrix для интерактивного редактора шаблонов ───────────────
+# Позволяет фронтенду нарисовать «рамку» вокруг DataMatrix в превью и
+# перетаскивать её мышью, меняя только координаты ^FO соответствующего поля.
+
+# Размер этикетки по умолчанию (4x6 дюймов), если в ZPL нет ^PW/^LL.
+_DEFAULT_LABEL_W_IN = 4.0
+_DEFAULT_LABEL_H_IN = 6.0
+
+_PW_RE = re.compile(r'\^PW(\d+)')
+_LL_RE = re.compile(r'\^LL(\d+)')
+_LH_RE = re.compile(r'\^LH\s*(-?\d+)\s*,\s*(-?\d+)')
+
+
+def label_size_dots(zpl: str, dpmm: int = 8) -> Tuple[int, int]:
+    """Размер этикетки в точках ZPL.
+
+    Берётся из ``^PW``/``^LL`` (они уже в точках); если их нет — 4x6 дюймов
+    при заданном ``dpmm`` (по умолчанию 8 точек/мм = 203 dpi, как в превью).
+    """
+    m = _PW_RE.search(zpl or '')
+    w = int(m.group(1)) if m else int(round(_DEFAULT_LABEL_W_IN * dpmm * 25.4))
+    m = _LL_RE.search(zpl or '')
+    h = int(m.group(1)) if m else int(round(_DEFAULT_LABEL_H_IN * dpmm * 25.4))
+    return w, h
+
+
+def label_home_dots(zpl: str) -> Tuple[int, int]:
+    """Смещение начала координат ``^LH`` (по умолчанию 0,0)."""
+    m = _LH_RE.search(zpl or '')
+    if not m:
+        return 0, 0
+    return int(m.group(1)), int(m.group(2))
+
+
+def datamatrix_size_dots(data, module_dots: int, orient: str = 'N') -> Tuple[int, int]:
+    """Размер символа DataMatrix в точках ZPL (без тихой зоны).
+
+    Ширина/высота = число модулей (с учётом ориентации) × размер модуля.
+    """
+    matrix = _rotate_matrix(encode_datamatrix(data), orient)
+    rows, cols = len(matrix), len(matrix[0])
+    module = max(1, int(module_dots))
+    return cols * module, rows * module
+
+
+def datamatrix_fields_layout(
+    zpl: str,
+    *,
+    sample_data: str = '',
+    default_module: int = DEFAULT_MODULE_PX,
+) -> dict:
+    """Раскладка полей DataMatrix в ZPL для визуального редактора.
+
+    Возвращает словарь::
+
+        {
+          'label_w': <ширина этикетки в точках>,
+          'label_h': <высота этикетки в точках>,
+          'lh_x': <^LH x>, 'lh_y': <^LH y>,
+          'fields': [
+            {'index': 0, 'x': 30, 'y': 30, 'w': 50, 'h': 50,
+             'module': 5, 'orient': 'N'},
+            ...
+          ],
+        }
+
+    Координаты ``x``/``y`` — значения ``^FO`` поля (без ``^LH``), ``w``/``h`` —
+    размер символа в точках. Плейсхолдер ``{datamatrix}`` (а также любое
+    выражение со ``{``) заменяется на ``sample_data``, чтобы размер совпал с
+    тем, что реально рисуется в превью.
+    """
+    lh_x, lh_y = label_home_dots(zpl)
+    label_w, label_h = label_size_dots(zpl)
+
+    fields: List[dict] = []
+    for idx, m in enumerate(_DM_FIELD_RE.finditer(zpl or '')):
+        bparams = m.group('bparams') or ''
+        orient = bparams[0].upper() if bparams and bparams[0].upper() in 'NRIB' else 'N'
+        module = _module_from_bx_params(bparams, default_module)
+        data = m.group('data') or ''
+        if m.group('fh'):
+            data = _decode_hex_field(data)
+        if (not data or '{' in data) and sample_data:
+            data = sample_data
+        try:
+            w, h = datamatrix_size_dots(data, module, orient)
+        except DataMatrixEncodeError:
+            # Данные не кодируются — даём запасной квадрат, чтобы рамку можно
+            # было перетаскивать (координаты всё равно верные).
+            w = h = module * 16
+        fields.append({
+            'index': idx,
+            'x': int(m.group('x')),
+            'y': int(m.group('y')),
+            'w': w,
+            'h': h,
+            'module': module,
+            'orient': orient,
+        })
+
+    return {
+        'label_w': label_w,
+        'label_h': label_h,
+        'lh_x': lh_x,
+        'lh_y': lh_y,
+        'fields': fields,
+    }
+
+
 def replace_datamatrix_with_graphics(zpl: str) -> Tuple[str, int]:
     """Заменить поля ``^BX`` (DataMatrix) на ``^GF`` нашего рендерера.
 

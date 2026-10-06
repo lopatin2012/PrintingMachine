@@ -1,5 +1,6 @@
 # routers/code_template.py
 
+import json
 import logging
 import asyncio
 from uuid import UUID
@@ -25,6 +26,7 @@ from services.zpl_renderer import (
     render_zpl_preview,
 )
 from services.preview_renderer import render_preview_png
+from services.datamatrix_renderer import datamatrix_fields_layout
 
 from helpers.responses import ajax_or_redirect
 from helpers.printers import substitute_placeholders
@@ -654,10 +656,27 @@ async def render_template_preview(
             png_bytes, engine = await asyncio.to_thread(
                 render_preview_png, preview_code,
             )
+            headers = {'X-Render-Engine': engine}
+
+            # Раскладка DataMatrix для интерактивного перетаскивания в
+            # редакторе шаблонов. Считается по ИСХОДНОМУ zpl_code (с
+            # плейсхолдерами), чтобы фронтенд мог найти то же поле по индексу.
+            try:
+                layout = datamatrix_fields_layout(
+                    zpl_code, sample_data=preview_datamatrix,
+                )
+                headers['X-DM-Layout'] = json.dumps(
+                    layout, ensure_ascii=True, separators=(',', ':'),
+                )
+            except Exception as layout_err:  # noqa: BLE001 - превью важнее
+                logger.warning(
+                    'Не удалось вычислить раскладку DataMatrix: %s', layout_err,
+                )
+
             return Response(
                 content=png_bytes,
                 media_type='image/png',
-                headers={'X-Render-Engine': engine},
+                headers=headers,
             )
         except Exception as e:
             logger.error(f'Ошибка рендеринга предпросмотра: {e}')
