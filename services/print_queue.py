@@ -16,9 +16,31 @@ from helpers.printers import (
     check_printer_status_async, check_printer_status_on_socket,
     clear_printer_queue_async,
     replace_cyrillic_in_zpl, substitute_placeholders, send_zpl_safely)
+from services.datamatrix_renderer import replace_datamatrix_with_graphics
 from models import PrintJob
 
 logger = logging.getLogger(__name__)
+
+
+def rasterize_datamatrix(zpl: str) -> str:
+    """Отрисовать DataMatrix-поля (``^BX``) растром ``^GF`` при печати.
+
+    Превью этикеток уже подменяет ``^BX`` на ``^GF`` (наш рендерер ECC200),
+    а печать отдавала ``^BX`` на кодирование самому принтеру. У Zebra
+    кодирование поля зависит от параметров ``^BX`` (escape-символ quality 200,
+    GS1-разделители ``\\x1d`` и т.п.) и изредка даёт пустой символ — на
+    этикетке, где, кроме DataMatrix, ничего нет, это выглядит как полностью
+    пустой стикер. Поэтому печатаем тот же растром, что и превью.
+
+    Если DataMatrix-полей нет (или символ не закодирован) — возвращает ZPL
+    без изменений. Ошибки рендера не должны прерывать печать.
+    """
+    try:
+        rasterized, replaced = replace_datamatrix_with_graphics(zpl)
+    except Exception as e:  # pragma: no cover - защита от неожиданного сбоя
+        logger.warning('Не удалось отрисовать DataMatrix растром, шлём ^BX как есть: %s', e)
+        return zpl
+    return rasterized if replaced else zpl
 
 # Как часто сохранять прогресс печати (printed_count) в БД — этикеток.
 PROGRESS_COMMIT_EVERY = 25
@@ -475,6 +497,11 @@ class PrinterQueue:
                         if i < len(task.datamatrix_codes) else ''
                     ),
                 )
+                # DataMatrix печатаем растром (^GF) нашим рендерером, а не
+                # отдаём ^BX на кодирование принтеру: у Zebra редкие поля
+                # кодируются пустыми (escape/GS качество 200), а на стикере,
+                # кроме DM, ничего нет — получается полностью пустая этикетка.
+                box_zpl = rasterize_datamatrix(box_zpl)
                 label_bytes = box_zpl.encode('utf-8')
                 await asyncio.to_thread(
                     send_zpl_safely, batch_conn if batch_mode else sock, label_bytes)
