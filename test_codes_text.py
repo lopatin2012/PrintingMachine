@@ -37,5 +37,23 @@ def test_all_blank_codes_raise():
         build_codes_text(['', None])
 
 
+def test_large_batch_of_9500_codes():
+    """9500 кодов выгружаются полностью (закрывает баг с лимитом 5000)."""
+    codes = [f'{i:032d}' for i in range(9500)]
+    text = build_codes_text(codes)
+    lines = text.split('\n')
+    assert lines[-1] == ''            # перевод строки в конце
+    assert len(lines) == 9501
+    assert lines[0] == codes[0]
+    assert lines[9499] == codes[9499]
+
+
+def test_export_limit_covers_large_batches():
+    """Лимит TXT-выгрузки позволяет партию в 9500 кодов."""
+    from routers.print_job import CODES_EXPORT_MAX
+
+    assert CODES_EXPORT_MAX >= 9500
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

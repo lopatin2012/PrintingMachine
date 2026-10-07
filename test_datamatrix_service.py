@@ -33,10 +33,11 @@ class _FakeClient:
     """Фейковый AsyncClient с записью последнего GET."""
 
     last_get = None
+    last_timeout = None
     response = None
 
     def __init__(self, *args, **kwargs):
-        pass
+        _FakeClient.last_timeout = kwargs.get('timeout')
 
     async def __aenter__(self):
         return self
@@ -52,6 +53,7 @@ class _FakeClient:
 @pytest.fixture(autouse=True)
 def _patch_client(monkeypatch):
     _FakeClient.last_get = None
+    _FakeClient.last_timeout = None
     _FakeClient.response = None
     monkeypatch.setattr(svc.httpx, 'AsyncClient', _FakeClient)
     yield
@@ -84,6 +86,20 @@ def test_fetch_issued_adds_flag():
         external_uuid='u-1', amount_codes=1, issued=True,
     ))
     assert _FakeClient.last_get['params']['issued'] == '1'
+
+
+def test_fetch_uses_default_timeout():
+    _FakeClient.response = _FakeResponse({'is_error': False, 'codes': []})
+    _run(fetch_datamatrix_codes_by_uuid(external_uuid='u-1', amount_codes=1))
+    assert _FakeClient.last_timeout == svc.CODES_SERVICE_TIMEOUT
+
+
+def test_fetch_passes_custom_timeout():
+    _FakeClient.response = _FakeResponse({'is_error': False, 'codes': ['c1']})
+    _run(fetch_datamatrix_codes_by_uuid(
+        external_uuid='u-1', amount_codes=1, timeout=99.0,
+    ))
+    assert _FakeClient.last_timeout == 99.0
 
 
 def test_fetch_empty_codes_is_ok():

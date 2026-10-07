@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 from datetime import date, timedelta
 from typing import Optional
 from urllib.parse import quote
@@ -43,6 +44,17 @@ workshop_user_crud = WorkshopUserCRUD()
 product_crud = ProductCRUD()
 printer_crud = PrinterCRUD()
 template_crud = CodeTemplateCRUD()
+
+# Максимум кодов DataMatrix, выгружаемых в TXT-файл (один код на строку).
+# Печать этим значением не ограничивается — лимит защищает endpoint от
+# чрезмерно больших выгрузок. Настраивается переменной окружения
+# CODES_EXPORT_MAX (по умолчанию 100000 — покрывает партии в десятки тысяч).
+CODES_EXPORT_MAX = max(1, int(os.getenv('CODES_EXPORT_MAX', '100000')))
+
+# Таймаут (сек) запроса кодов у внешнего сервиса при выгрузке в TXT. Большие
+# партии (тысячи кодов) генерируются дольше обычных 10 секунд, поэтому для
+# выгрузки даём запас. Настраивается CODES_EXPORT_TIMEOUT (по умолчанию 120).
+CODES_EXPORT_TIMEOUT = max(1.0, float(os.getenv('CODES_EXPORT_TIMEOUT', '120')))
 
 # ─── ЭНДПОИНТЫ ───────────────────────────────────────────────────────────────
 
@@ -693,6 +705,7 @@ async def _load_codes_for_download(
         amount: int,
         template_id: Optional[UUID],
         current_user: User,
+        timeout: Optional[float] = None,
 ):
     """Общая часть выгрузок кодов: доступ, шаблон и сами коды DataMatrix.
 
@@ -700,7 +713,8 @@ async def _load_codes_for_download(
     имеет доступ к принтеру с активным шаблоном продукта, выбирает шаблон
     (переданный ``template_id`` либо свежайший активный на доступном принтере)
     и запрашивает коды у внешнего сервиса. Возвращает
-    ``(product, template, codes)``.
+    ``(product, template, codes)``. ``timeout`` — таймаут запроса кодов (для
+    больших партий можно увеличить).
     """
     product = await product_crud.get(db, product_id)
     if not product:
@@ -772,7 +786,7 @@ async def _load_codes_for_download(
 
     try:
         codes = await fetch_datamatrix_codes_by_uuid(
-            external_uuid=external_uuid, amount_codes=amount,
+            external_uuid=external_uuid, amount_codes=amount, timeout=timeout,
         )
     except DatamatrixServiceError as e:
         raise HTTPException(status_code=502, detail=str(e))
@@ -845,7 +859,10 @@ async def download_codes_pdf(
 @router.get('/api/printing/codes/txt')
 async def download_codes_txt(
         product_id: UUID,
-        amount: int = Query(1, ge=1, le=5000, description='Сколько кодов выгрузить'),
+        amount: int = Query(
+            1, ge=1, le=CODES_EXPORT_MAX,
+            description='Сколько кодов выгрузить',
+        ),
         template_id: Optional[UUID] = Query(
             None, description='Шаблон, к которому привязан продукт',
         ),
@@ -860,7 +877,7 @@ async def download_codes_txt(
     """
     product, _template, codes = await _load_codes_for_download(
         db, product_id, amount=amount, template_id=template_id,
-        current_user=current_user,
+        current_user=current_user, timeout=CODES_EXPORT_TIMEOUT,
     )
 
     text = build_codes_text(codes)

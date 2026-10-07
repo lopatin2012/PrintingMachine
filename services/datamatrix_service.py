@@ -28,7 +28,7 @@ JSON-список строк.
 """
 import logging
 import os
-from typing import List
+from typing import List, Optional
 
 import httpx
 
@@ -131,11 +131,16 @@ async def fetch_datamatrix_codes_by_uuid(
     external_uuid: str,
     amount_codes: int,
     issued: bool = False,
+    timeout: Optional[float] = None,
 ) -> List[str]:
     """Запросить коды DataMatrix у внешнего сервиса по UUID продукта.
 
     Обращается к GET-методу ``/codes/api/get_codes_for_printer_by_product_uuid/``
     (``uuid_product``, ``amount_codes``, при необходимости ``issued=1``).
+
+    ``timeout`` — таймаут запроса в секундах; если не задан, используется
+    ``CODES_SERVICE_TIMEOUT``. Для больших партий (выгрузка TXT на тысячи
+    кодов) можно передать увеличенный таймаут.
 
     Возвращает список кодов (может быть пустым, если свободных кодов нет).
     При недоступности сервиса, некорректном ответе или ошибке на стороне
@@ -164,8 +169,9 @@ async def fetch_datamatrix_codes_by_uuid(
         amount_codes, external_uuid, url,
     )
 
+    effective_timeout = CODES_SERVICE_TIMEOUT if timeout is None else timeout
     try:
-        async with httpx.AsyncClient(timeout=CODES_SERVICE_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=effective_timeout) as client:
             response = await client.get(url, params=params, headers=headers)
     except httpx.RequestError as e:
         raise DatamatrixServiceError(
