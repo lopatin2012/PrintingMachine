@@ -80,7 +80,9 @@ def test_raster_decodes_back_to_code_with_underscore_and_gs():
     out = _render_template(CODE)
     decoded = _decode_gfa(out)
     assert decoded, 'растр должен читаться как DataMatrix'
-    assert decoded[0].data.decode('latin-1') == CODE
+    # CODE — GS1-строка: разделитель GS (\x1d) кодируется как FNC1 и при
+    # чтении не выводится отдельным символом.
+    assert decoded[0].data.decode('latin-1') == CODE.replace('\x1d', '')
 
 
 def test_raster_matches_dot_size_of_bx():

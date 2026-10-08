@@ -96,13 +96,86 @@ def _detect_module_px(gray: Image.Image) -> int:
     return module or 1
 
 
+# ── GS1 (FNC1) ───────────────────────────────────────────────────────────────
+# Для сканеров важно, чтобы символ был помечен как GS1 Data Matrix: в первой
+# позиции должен стоять FNC1. libdmtx 0.7.4 (идёт с pylibdmtx) FNC1 не умеет,
+# поэтому GS1-символы кодируем чистым Python-портом Zint (pystrich), а обычные
+# DataMatrix — прежним путём через libdmtx.
+
+# ZPL-escape FNC1 (escape-символ ^BX: '\' или '_'), которым в шаблоне помечают
+# GS1 (например, «Молочка»: ^FD\1(01)...).
+_FNC1_ZPL_ESCAPES = ('\\1', '_1')
+
+
+def _as_text(data) -> str:
+    """Данные как строка (байты трактуем как latin-1, чтобы сохранить GS/1D)."""
+    if isinstance(data, bytes):
+        return data.decode('latin-1')
+    if data is None:
+        return ''
+    return str(data)
+
+
+def is_gs1_data(data) -> bool:
+    """Похоже ли на GS1-строку элементов (AI «01» + GTIN) или задан FNC1-escape.
+
+    Внешние коды сервиса — это GS1-строка вида ``01<GTIN14>21<серийный>
+    <GS>93<...>``. УИП (шаблоны с ``{uip_*}``) начинается с самого GTIN
+    (например, ``0460...``), поэтому под GS1 не попадает.
+    """
+    s = _as_text(data)
+    if s.startswith(_FNC1_ZPL_ESCAPES):
+        return True
+    # AI 01 (GTIN) + 14 цифр — надёжный признак GS1-строки.
+    return len(s) >= 16 and s.startswith('01') and s[2:16].isdigit()
+
+
+def _encode_gs1(data) -> List[List[int]]:
+    """Закодировать GS1 Data Matrix (FNC1) через pystrich (порт Zint)."""
+    try:
+        from pystrich.datamatrix import DataMatrixEncoder, DataMatrixData, FNC1
+    except Exception as e:  # pragma: no cover - зависит от окружения
+        raise DataMatrixEncodeError(
+            f'pystrich недоступен, GS1 DataMatrix не закодировать: {e}'
+        ) from e
+
+    s = _as_text(data)
+    for esc in _FNC1_ZPL_ESCAPES:
+        if s.startswith(esc):
+            s = s[len(esc):]
+            break
+
+    # Ведущий FNC1 + FNC1 вместо каждого разделителя GS (\x1d).
+    segments: List = [FNC1]
+    for i, part in enumerate(s.split('\x1d')):
+        if i:
+            segments.append(FNC1)
+        segments.append(part)
+
+    payload = DataMatrixData(*segments, encoding='ascii')
+    encoder = DataMatrixEncoder(payload, quiet_zone=0)
+    # init_renderer() достраивает finder-паттерн (границы) — берём готовую сетку.
+    grid = encoder.init_renderer().matrix
+    return [[1 if cell else 0 for cell in row] for row in grid]
+
+
 def encode_datamatrix(data) -> List[List[int]]:
     """Закодировать данные в матрицу DataMatrix (список строк 0/1).
 
-    Возвращает матрицу символа ECC200 без тихой зоны. Бросает
-    :class:`DataMatrixEncodeError`, если pylibdmtx недоступен или данные не
-    кодируются.
+    GS1-строки (AI «01» + GTIN или явный FNC1-escape) кодируются как GS1 Data
+    Matrix (FNC1) через pystrich; остальные — через pylibdmtx. Возвращает
+    матрицу символа ECC200 без тихой зоны. Бросает :class:`DataMatrixEncodeError`,
+    если данные не кодируются.
     """
+    if is_gs1_data(data):
+        try:
+            return _encode_gs1(data)
+        except DataMatrixEncodeError:
+            raise
+        except Exception as e:  # неожиданная ошибка pystrich — фолбэк на libdmtx
+            logger.warning('GS1 DataMatrix не закодирован через pystrich (%s), '
+                           'фолбэк на обычный DataMatrix', e)
+
     try:
         from pylibdmtx.pylibdmtx import encode as _encode
     except Exception as e:  # pragma: no cover - зависит от окружения

@@ -17,6 +17,7 @@ from services.datamatrix_renderer import (
     DEFAULT_QUIET_ZONE,
     datamatrix_to_zpl_gfa,
     encode_datamatrix,
+    is_gs1_data,
     module_dots_from_zpl,
     render_datamatrix_image,
     replace_datamatrix_with_graphics,
@@ -42,7 +43,31 @@ def test_rendered_symbol_decodes_back():
     img = render_datamatrix_image(CODE, module_px=6)
     decoded = dmtx_decode(img)
     assert decoded, 'символ DataMatrix должен читаться'
-    assert decoded[0].data.decode('latin-1') == CODE
+    # CODE — GS1-строка: разделитель GS (\x1d) кодируется как FNC1 и при
+    # чтении не выводится отдельным символом.
+    assert decoded[0].data.decode('latin-1') == CODE.replace('\x1d', '')
+
+
+def test_gs1_string_is_detected():
+    """Внешние коды (AI 01 + GTIN14) распознаются как GS1."""
+    assert is_gs1_data(CODE)
+    assert is_gs1_data('0104601751027529215TsqZb')  # без разделителя — тоже GS1
+
+
+def test_gs1_fnc1_is_applied():
+    """GS1-символ: разделитель закодирован как FNC1 (при чтении не виден)."""
+    img = render_datamatrix_image(CODE, module_px=6, quiet_zone=4)
+    decoded = dmtx_decode(img)
+    assert decoded
+    data = decoded[0].data.decode('latin-1')
+    assert '\x1d' not in data
+    assert data == CODE.replace('\x1d', '')
+
+
+def test_non_gs1_is_not_detected():
+    """УИП (начинается с GTIN, без AI 01) под GS1 не попадает."""
+    assert not is_gs1_data('0460175102866226100101AB120000000000000')
+    assert not is_gs1_data('04609990000011')
 
 
 def test_image_size_matches_modules_and_quiet_zone():
