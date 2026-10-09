@@ -16,9 +16,31 @@ from helpers.printers import (
     check_printer_status_async, check_printer_status_on_socket,
     clear_printer_queue_async,
     replace_cyrillic_in_zpl, substitute_placeholders, send_zpl_safely)
+from services.datamatrix_renderer import replace_datamatrix_with_graphics
 from models import PrintJob
 
 logger = logging.getLogger(__name__)
+
+
+def rasterize_datamatrix(zpl: str) -> str:
+    """Отрисовать DataMatrix-поля (``^BX``) растром ``^GF`` при печати.
+
+    Превью этикеток уже подменяет ``^BX`` на ``^GF`` (наш рендерер ECC200),
+    а печать отдавала ``^BX`` на кодирование самому принтеру. У Zebra
+    кодирование поля зависит от параметров ``^BX`` (escape-символ quality 200,
+    GS1-разделители ``\\x1d`` и т.п.) и изредка даёт пустой символ — на
+    этикетке, где, кроме DataMatrix, ничего нет, это выглядит как полностью
+    пустой стикер. Поэтому печатаем тот же растром, что и превью.
+
+    Если DataMatrix-полей нет (или символ не закодирован) — возвращает ZPL
+    без изменений. Ошибки рендера не должны прерывать печать.
+    """
+    try:
+        rasterized, replaced = replace_datamatrix_with_graphics(zpl)
+    except Exception as e:  # pragma: no cover - защита от неожиданного сбоя
+        logger.warning('Не удалось отрисовать DataMatrix растром, шлём ^BX как есть: %s', e)
+        return zpl
+    return rasterized if replaced else zpl
 
 # Как часто сохранять прогресс печати (printed_count) в БД — этикеток.
 PROGRESS_COMMIT_EVERY = 25
@@ -97,52 +119,74 @@ class PrintTask:
 
 
 class PrinterQueue:
-    """Асинхронная очередь печати с обработкой пауз и повторами."""
+    """Асинхронная очередь печати: отдельный воркер на каждый принтер.
+
+    Воркер и его очередь создаются автоматически при постановке первого
+    задания на принтер (``ip:port``) — добавлять принтер и перезапускать
+    сервис не нужно. Задания на один принтер выполняются строго
+    последовательно (одна очередь + один воркер), на разные принтеры —
+    параллельно.
+    """
 
     def __init__(
         self,
         db_getter: Callable[[], AsyncGenerator[AsyncSession, None]],
-        max_concurrent_printers: int = 1,
     ):
         self.db_getter = db_getter
-        self.queue: asyncio.Queue[PrintTask] = asyncio.Queue()
-        self._workers: list[asyncio.Task] = []
         self._running = False
-        self._max_concurrent = max_concurrent_printers
+        # Очередь и воркер на каждый принтер (ключ — "ip:port").
+        self._queues: dict[str, asyncio.Queue[PrintTask]] = {}
+        self._workers: dict[str, asyncio.Task] = {}
         self._active_tasks: dict[str, PrintTask] = {}
-        # Блокировки по принтерам (ip:port) — задания на один и тот же принтер
-        # выполняются строго последовательно, на разные — параллельно.
-        self._printer_locks: dict[str, asyncio.Lock] = {}
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _printer_key(printer_ip: str, printer_port: int) -> str:
+        return f"{printer_ip}:{printer_port}"
+
     async def start(self):
         if self._running:
             return
         self._running = True
-        for i in range(self._max_concurrent):
-            worker_task = asyncio.create_task(self._worker(f"printer-worker-{i}"))
-            self._workers.append(worker_task)
-        logger.info("Запущено %d воркеров очереди печати", len(self._workers))
+        logger.info(
+            "Очередь печати запущена: воркер на каждый принтер создаётся "
+            "автоматически при постановке задания"
+        )
 
     async def stop(self):
         self._running = False
 
-        for w in self._workers:
+        for w in self._workers.values():
             w.cancel()
-        await asyncio.gather(*self._workers, return_exceptions=True)
+        if self._workers:
+            await asyncio.gather(*self._workers.values(), return_exceptions=True)
         self._workers.clear()
+        self._queues.clear()
         logger.info("Очередь печати остановлена")
 
     async def enqueue(self, task: PrintTask):
         self._active_tasks[str(task.job_id)] = task
-        await self.queue.put(task)
+        key = self._printer_key(task.printer_ip, task.printer_port)
+        queue = self._queues.get(key)
+        if queue is None:
+            queue = asyncio.Queue()
+            self._queues[key] = queue
+        await queue.put(task)
+        self._ensure_worker(key)
         logger.info(
-            "Задание %s добавлено в очередь (размер: %d)",
-            task.job_id, self.queue.qsize(),
+            "Задание %s добавлено в очередь принтера %s (размер: %d)",
+            task.job_id, key, queue.qsize(),
         )
+
+    def _ensure_worker(self, key: str):
+        """Создать воркер принтера, если его ещё нет (или он завершился)."""
+        worker = self._workers.get(key)
+        if worker is None or worker.done():
+            self._workers[key] = asyncio.create_task(self._worker(key))
+            logger.info("Запущен воркер очереди для принтера %s", key)
 
     async def cancel_task(self, job_id: UUID) -> bool:
         """Пометить задание как отменённое и сбросить очередь принтера."""
@@ -178,19 +222,6 @@ class PrinterQueue:
     def _is_cancelled(self, task: PrintTask) -> bool:
         return task.max_retries < 0
 
-    def _get_printer_lock(self, printer_key: str) -> asyncio.Lock:
-        """Блокировка на конкретный принтер (ip:port).
-
-        Гарантирует, что задания на один принтер не перемешают этикетки друг друга,
-        при этом задания на разные принтеры могут выполняться параллельно
-        (при наличии нескольких воркеров очереди).
-        """
-        lock = self._printer_locks.get(printer_key)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._printer_locks[printer_key] = lock
-        return lock
-
     async def _get_db(self) -> tuple[AsyncSession, any]:
         gen = self.db_getter()
         db: AsyncSession = await gen.__anext__()
@@ -205,29 +236,29 @@ class PrinterQueue:
     # Worker loop
     # ------------------------------------------------------------------
 
-    async def _worker(self, name: str):
-        while self._running or not self.queue.empty():
+    async def _worker(self, key: str):
+        """Воркер одного принтера: последовательно обрабатывает его очередь."""
+        queue = self._queues[key]
+        name = f"printer-worker[{key}]"
+        while self._running or not queue.empty():
             try:
-                task = await asyncio.wait_for(self.queue.get(), timeout=1.0)
+                task = await asyncio.wait_for(queue.get(), timeout=1.0)
             except asyncio.TimeoutError:
                 continue
 
             db, gen = None, None
             try:
-                printer_key = f"{task.printer_ip}:{task.printer_port}"
-                lock = self._get_printer_lock(printer_key)
-                async with lock:
-                    db, gen = await self._get_db()
-                    await self._process_task(task, db)
+                db, gen = await self._get_db()
+                await self._process_task(task, db)
             except asyncio.CancelledError:
-                self.queue.put_nowait(task)
+                queue.put_nowait(task)
                 raise
             except Exception as e:
                 logger.exception("Ошибка в воркере %s при обработке %s: %s", name, task.job_id, e)
                 if task.retries < task.max_retries and not self._is_cancelled(task):
                     task.retries += 1
                     task.created_at = datetime.now()
-                    await self.queue.put(task)
+                    await queue.put(task)
                     logger.warning(
                         "Задание %s возвращено в очередь (попытка %d)",
                         task.job_id, task.retries,
@@ -238,7 +269,7 @@ class PrinterQueue:
                 if db is not None:
                     await self._close_db(db, gen)
                 self._active_tasks.pop(str(task.job_id), None)
-                self.queue.task_done()
+                queue.task_done()
 
     # ------------------------------------------------------------------
     # Core task processing
@@ -475,6 +506,11 @@ class PrinterQueue:
                         if i < len(task.datamatrix_codes) else ''
                     ),
                 )
+                # DataMatrix печатаем растром (^GF) нашим рендерером, а не
+                # отдаём ^BX на кодирование принтеру: у Zebra редкие поля
+                # кодируются пустыми (escape/GS качество 200), а на стикере,
+                # кроме DM, ничего нет — получается полностью пустая этикетка.
+                box_zpl = rasterize_datamatrix(box_zpl)
                 label_bytes = box_zpl.encode('utf-8')
                 await asyncio.to_thread(
                     send_zpl_safely, batch_conn if batch_mode else sock, label_bytes)
