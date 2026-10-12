@@ -32,11 +32,11 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
 
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-async def get_current_user(
+async def get_current_user_optional(
         request: Request,
         db: AsyncSession = Depends(get_db)
-) -> Coroutine[Any, Any, User | None] | None:
-    """Получить текущего пользователя из куки"""
+) -> User | None:
+    """Текущий пользователь из куки или None (для гостевых страниц)."""
     token = request.cookies.get('access_token')
 
     if not token:
@@ -65,6 +65,24 @@ async def get_current_user(
     result = await user_crud.get(db, user_id)
 
     return result
+
+
+async def get_current_user(
+        current_user: User | None = Depends(get_current_user_optional)
+) -> User:
+    """Текущий пользователь; без валидной сессии — редирект на вход (302).
+
+    Защищённые страницы и методы не должны падать с 500 при отсутствии или
+    просрочке токена — гостя отправляем на страницу входа. Гостевым остаётся
+    главная (там нужен None) и polling-эндпоинты, использующие
+    :func:`get_current_user_optional`.
+    """
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_302_FOUND,
+            headers={'Location': 'user_login'}
+        )
+    return current_user
 
 async def get_current_admin(
         current_user: User = Depends(get_current_user)
