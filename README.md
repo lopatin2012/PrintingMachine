@@ -339,6 +339,9 @@ DEBUG=True
 SERVICE_HOST=0.0.0.0
 SERVICE_PORT=8000
 SECRET_KEY=change-me
+# Время жизни сессии в минутах. 0 (по умолчанию) — сессия бессрочная (токен без exp);
+# задайте, например, 480 — сессия 8 часов.
+# ACCESS_TOKEN_EXPIRE_MINUTES=0
 # ALLOWED_ORIGINS=https://print.example.com,https://admin.example.com
 
 # Очередь печати: воркер на каждый принтер создаётся автоматически, настраивать нечего

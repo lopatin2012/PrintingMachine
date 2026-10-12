@@ -20,15 +20,32 @@ user_crud = UserCRUD()
 
 SECRET_KEY = os.getenv("SECRET_KEY", "90d0574d11647998cfe986d20553fa00")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 600
+# Время жизни сессии в минутах. 0 (по умолчанию) — сессия бессрочная: токен
+# выдаётся без claim'а `exp` и не истекает. Можно переопределить через env
+# ACCESS_TOKEN_EXPIRE_MINUTES (например, 480 — 8 часов).
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "0") or "0")
+# max_age сессионной куки (сек). Для бессрочного токена ставим «надолго»; при
+# этом браузеры всё равно ограничивают срок хранения куки (Chrome/Firefox ~400 дней).
+COOKIE_MAX_AGE = (
+    ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    if ACCESS_TOKEN_EXPIRE_MINUTES > 0
+    else 10 * 365 * 24 * 3600
+)
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="user_login", auto_error=False)
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    """Создать токен доступа"""
+    """Создать токен доступа.
+
+    Без явного ``expires_delta`` срок берётся из ``ACCESS_TOKEN_EXPIRE_MINUTES``.
+    При значении 0 claim ``exp`` не добавляется — токен бессрочный.
+    """
     to_encode = data.copy()
-    expire = datetime.now() + (expires_delta or timedelta(minutes=15))
-    to_encode.update({'exp': expire})
+
+    if expires_delta is None and ACCESS_TOKEN_EXPIRE_MINUTES > 0:
+        expires_delta = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    if expires_delta is not None:
+        to_encode['exp'] = datetime.now() + expires_delta
 
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
