@@ -1,7 +1,5 @@
 # routers/auth.py
 
-from datetime import timedelta
-
 from fastapi import APIRouter, Request, Form, Depends, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,13 +12,10 @@ from auth_utils import get_password_hash, verify_password
 from crud.user import UserCRUD
 
 from templates_config import templates
-from security import create_access_token, get_current_admin
+from security import create_access_token, get_current_admin, COOKIE_MAX_AGE
 
 router = APIRouter()
 user_crud = UserCRUD()
-
-# Конфигурация токена
-ACCESS_TOKEN_EXPIRE_MINUTES = 1500
 
 @router.get('/register', response_class=HTMLResponse)
 async def register_page(
@@ -144,12 +139,8 @@ async def login(
             status_code=status.HTTP_401_UNAUTHORIZED
         )
 
-    # Создаём JWT токен.
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={'sub': str(user.id)},
-        expires_delta=access_token_expires
-    )
+    # Создаём JWT токен (бессрочный по умолчанию — см. security.py).
+    access_token = create_access_token(data={'sub': str(user.id)})
 
     # Перенаправление с установкой куки.
     response = RedirectResponse(
@@ -160,7 +151,7 @@ async def login(
         key='access_token',
         value=f'Bearer {access_token}',
         httponly=True,
-        max_age=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        max_age=COOKIE_MAX_AGE,
         secure=False,
         samesite='lax'
     )

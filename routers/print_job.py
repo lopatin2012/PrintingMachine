@@ -34,7 +34,7 @@ from services.codes_text import build_codes_text
 from services.datamatrix_renderer import module_dots_from_zpl
 
 from templates_config import templates
-from security import get_current_user
+from security import get_current_user, get_current_user_optional
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=['printing'])
@@ -355,7 +355,7 @@ async def stop_print_job(
 @router.get('/api/printing/jobs/user')
 async def get_user_print_jobs(
         db: AsyncSession = Depends(get_db),
-        current_user: User = Depends(get_current_user)
+        current_user: User = Depends(get_current_user_optional)
 ):
     """Последние задания пользователя для обновления статуса."""
     if current_user is None:
@@ -393,7 +393,7 @@ async def get_user_print_jobs(
 @router.get('/api/printing/jobs/active')
 async def get_active_print_jobs(
         db: AsyncSession = Depends(get_db),
-        current_user: User = Depends(get_current_user)
+        current_user: User = Depends(get_current_user_optional)
 ):
     if current_user is None:
         raise HTTPException(status_code=403, detail="Доступ запрещён")

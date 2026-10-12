@@ -16,7 +16,7 @@ from starlette.responses import JSONResponse
 
 import models
 from helper import BASE_DIR
-from security import get_current_user
+from security import get_current_user_optional
 from auth_utils import verify_password
 
 # Шаблоны.
@@ -189,7 +189,7 @@ async def favicon():
 @app.get('/', response_class=HTMLResponse, include_in_schema=False)
 async def home(
         request: Request,
-        current_user: models.User = Depends(get_current_user)
+        current_user: models.User = Depends(get_current_user_optional)
 ):
     """Главная страница"""
     # Предупреждение, если используется пароль по умолчанию.
