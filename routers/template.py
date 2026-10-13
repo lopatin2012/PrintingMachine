@@ -15,7 +15,7 @@ from database import get_db
 from crud.code_template import CodeTemplateCRUD
 from crud.product import ProductCRUD
 from crud.printer import PrinterCRUD
-from schemas import CodeTemplateCreate, CodeTemplateUpdate
+from schemas import CodeTemplateCreate, CodeTemplateUpdate, normalize_label_type
 from models import User, CodeTemplate, Product, Printer
 
 from templates_config import templates
@@ -104,6 +104,7 @@ async def template_create(
         is_active: bool = Form(True),
         uip_include_batch: bool = Form(False),
         is_print_gtin_unit: bool = Form(False),
+        label_type: str = Form('group'),
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_admin),
         endpoint: str='/templates'
@@ -136,6 +137,12 @@ async def template_create(
             endpoint, is_ajax, False, 'Код шаблона должен содержать минимум 5 символов'
         )
 
+    # Назначение шаблона: unit — потребительская упаковка, group — групповая/набор.
+    try:
+        label_type = normalize_label_type(label_type)
+    except ValueError as error:
+        return ajax_or_redirect(endpoint, is_ajax, False, str(error))
+
     # Проверка существования продукта
     product = await product_crud.get(db, product_id)
     if not product:
@@ -167,6 +174,7 @@ async def template_create(
         is_active=is_active,
         uip_include_batch=uip_include_batch,
         is_print_gtin_unit=is_print_gtin_unit,
+        label_type=label_type,
     )
     template = await template_crud.create(db, template_data)
 
@@ -189,6 +197,7 @@ async def template_create(
             'is_active': template.is_active,
             'uip_include_batch': bool(template.uip_include_batch),
             'is_print_gtin_unit': bool(template.is_print_gtin_unit),
+            'label_type': template.label_type,
             'print_code': template.print_code,
             'created_at': template.created_at.isoformat() if hasattr(template, 'created_at') else None,
         }
@@ -213,6 +222,7 @@ async def template_update(
         print_code: str = Form(...),
         uip_include_batch: bool = Form(False),
         is_print_gtin_unit: bool = Form(False),
+        label_type: str = Form('group'),
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_admin),
         endpoint: str = '/templates'
@@ -266,6 +276,12 @@ async def template_update(
             'Код шаблона должен содержать минимум 5 символов'
         )
 
+    # Назначение шаблона: unit — потребительская упаковка, group — групповая/набор.
+    try:
+        label_type = normalize_label_type(label_type)
+    except ValueError as error:
+        return ajax_or_redirect(endpoint, is_ajax, False, str(error))
+
     # Проверка существования продукта
     product = await product_crud.get(db, product_id)
     if not product:
@@ -296,6 +312,7 @@ async def template_update(
         print_code=print_code,
         uip_include_batch=uip_include_batch,
         is_print_gtin_unit=is_print_gtin_unit,
+        label_type=label_type,
     )
     updated = await template_crud.update(db, template_id, template_data)
 
@@ -311,6 +328,7 @@ async def template_update(
                 'is_active': updated.is_active,
                 'uip_include_batch': bool(updated.uip_include_batch),
                 'is_print_gtin_unit': bool(updated.is_print_gtin_unit),
+                'label_type': updated.label_type,
                 'updated_at': updated.updated_at.isoformat() if hasattr(updated, 'updated_at') else None,
             }
         }

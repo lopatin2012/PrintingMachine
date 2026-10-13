@@ -268,6 +268,25 @@ class ProductResponse(ProductInDBBase):
 
 # ---------- Код шаблона ----------
 
+# Назначение шаблона: unit — потребительская упаковка, group — групповая упаковка/набор.
+LABEL_TYPES = ('unit', 'group')
+
+
+def normalize_label_type(value: Optional[str]) -> str:
+    """Привести назначение шаблона к допустимому значению.
+
+    Пустое значение — 'group' (прежнее поведение: шаблон групповой упаковки).
+    """
+    normalized = (value or '').strip().lower()
+    if not normalized:
+        return 'group'
+    if normalized not in LABEL_TYPES:
+        raise ValueError(
+            f'Недопустимое назначение шаблона: {value}. Допустимо: {", ".join(LABEL_TYPES)}'
+        )
+    return normalized
+
+
 class CodeTemplateBase(BaseModel):
     """Схема кода шаблона"""
     product_id: UUID = Field(..., description='UUID продукта')
@@ -275,6 +294,12 @@ class CodeTemplateBase(BaseModel):
     name: str = Field(..., max_length=200, description='Наименование')
     print_code: str = Field(..., description='Код шаблона')
     is_active: bool = Field(True, description='Активен')
+    label_type: str = Field('group', description='Назначение шаблона: unit — потребительская, group — групповая упаковка/набор')
+
+    @field_validator('label_type')
+    @classmethod
+    def validate_label_type(cls, v: Optional[str]):
+        return normalize_label_type(v)
 
 class CodeTemplateCreate(CodeTemplateBase):
     """Создание шаблона"""
@@ -289,6 +314,12 @@ class CodeTemplateUpdate(BaseModel):
     is_active: Optional[bool] = Field(None, description='Активен')
     uip_include_batch: Optional[bool] = Field(None, description='Включать партию в УИП')
     is_print_gtin_unit: Optional[bool] = Field(None, description='Печатать DataMatrix-коды из внешнего сервиса')
+    label_type: Optional[str] = Field(None, description='Назначение шаблона: unit — потребительская, group — групповая упаковка/набор')
+
+    @field_validator('label_type')
+    @classmethod
+    def validate_label_type(cls, v: Optional[str]):
+        return None if v is None else normalize_label_type(v)
 
 class CodeTemplateInDBBase(CodeTemplateBase):
     """Код шаблона из БД"""

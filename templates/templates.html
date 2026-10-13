@@ -117,6 +117,7 @@
                     data-product-article="{{ template.product.article if template.product and template.product.article else '' }}"
                     data-uip-include-batch="{{ 'true' if template.uip_include_batch else 'false' }}"
                     data-is-print-gtin-unit="{{ 'true' if template.is_print_gtin_unit else 'false' }}"
+                    data-label-type="{{ template.label_type }}"
                     data-printer-id="{{ template.printer_id }}"
                     data-status="{{ 'active' if template.is_active else 'inactive' }}"
                     data-print-code="{{ template.print_code|e }}">
@@ -324,6 +325,17 @@
                                     <span>Печатать DataMatrix-коды из внешнего сервиса</span>
                                 </label>
                                 <small class="form-hint">При печати запрашивается список кодов DataMatrix у внешнего сервиса (плейсхолдер {datamatrix} в шаблоне); если коды не получены — печать отменяется с ошибкой</small>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="templateLabelType" class="form-label">
+                                    <span class="label-icon">🏷️</span> Назначение шаблона
+                                </label>
+                                <select id="templateLabelType" name="label_type" class="form-input">
+                                    <option value="group">Групповая упаковка / набор (GTIN упаковки)</option>
+                                    <option value="unit">Потребительская упаковка (GTIN единицы)</option>
+                                </select>
+                                <small class="form-hint">Потребительская этикетка отдаётся методом <code>/api/printing/zpl-unit</code> (по GTIN единицы), групповая и набор — методом <code>/api/printing/zpl</code> (по GTIN упаковки)</small>
                             </div>
                         </div>
 
@@ -564,6 +576,8 @@ function openAddTemplateForm() {
     if (uipChk) uipChk.checked = false;  // по умолчанию партия в УИП выключена
     const dmChk = document.getElementById('templateIsPrintGtinUnit');
     if (dmChk) dmChk.checked = false;  // по умолчанию DataMatrix из внешнего сервиса выключен
+    const labelSel = document.getElementById('templateLabelType');
+    if (labelSel) labelSel.value = 'group';  // по умолчанию — групповая упаковка/набор
     document.getElementById('templateFormModal').classList.remove('hidden');
 
     // Прокрутка к началу формы (сброс скролла полей)
@@ -587,7 +601,7 @@ function openAddTemplateForm() {
     setTimeout(() => document.getElementById('templateName').focus(), 300);
 }
 
-function editTemplate(id, name, productId, productGtin, productGtinUnit, productArticle, uipIncludeBatch, printerId, code, isPrintGtinUnit) {
+function editTemplate(id, name, productId, productGtin, productGtinUnit, productArticle, uipIncludeBatch, printerId, code, isPrintGtinUnit, labelType) {
     document.getElementById('formTitle').textContent = '✏️ Редактировать шаблон';
     document.getElementById('formSubmitText').textContent = 'Сохранить изменения';
     document.getElementById('templateForm').action = `/templates/${id}`;
@@ -606,6 +620,10 @@ function editTemplate(id, name, productId, productGtin, productGtinUnit, product
     // Флаг «DataMatrix из внешнего сервиса» из шаблона.
     const dmChk = document.getElementById('templateIsPrintGtinUnit');
     if (dmChk) dmChk.checked = isPrintGtinUnit === true || isPrintGtinUnit === 'true';
+
+    // Назначение шаблона (unit — потребительская упаковка, group — групповая/набор).
+    const labelSelect = document.getElementById('templateLabelType');
+    if (labelSelect) labelSelect.value = labelType === 'unit' ? 'unit' : 'group';
 
     console.log(productGtin);
 
@@ -1286,6 +1304,7 @@ function setupFormValidation() {
                     print_code: code,
                     uip_include_batch: document.getElementById('templateUipIncludeBatch')?.checked ?? false,
                     is_print_gtin_unit: document.getElementById('templateIsPrintGtinUnit')?.checked ?? false,
+                    label_type: document.getElementById('templateLabelType')?.value || 'group',
                     product_gtin_unit: document.getElementById('productGtinUnit')?.value || '',
                     product_article: document.getElementById('productArticle')?.value || '',
                 });
@@ -1361,6 +1380,7 @@ function updateTableRow(templateId, data) {
     if (data.product_article !== undefined) row.dataset.productArticle = data.product_article;
     if (data.uip_include_batch !== undefined) row.dataset.uipIncludeBatch = data.uip_include_batch ? 'true' : 'false';
     if (data.is_print_gtin_unit !== undefined) row.dataset.isPrintGtinUnit = data.is_print_gtin_unit ? 'true' : 'false';
+    if (data.label_type !== undefined) row.dataset.labelType = data.label_type;
     if (data.printer_id) row.dataset.printerId = data.printer_id;
     if (data.is_active !== undefined) row.dataset.status = data.is_active ? 'active' : 'inactive';
     if (data.print_code) row.dataset.printCode = data.print_code;
@@ -1429,6 +1449,7 @@ function createTableRow(template) {
     data-product-article="${template.product_article || ''}"
     data-uip-include-batch="${template.uip_include_batch ? 'true' : 'false'}"
     data-is-print-gtin-unit="${template.is_print_gtin_unit ? 'true' : 'false'}"
+    data-label-type="${template.label_type || 'group'}"
     data-printer-id="${template.printer_id || ''}"
     data-status="${statusClass}"
     data-print-code="${safePrintCode}">
@@ -1504,10 +1525,11 @@ function editTemplateFromRow(button, id, name) {
     const productArticle = row.dataset.productArticle || '';
     const uipIncludeBatch = row.dataset.uipIncludeBatch;
     const isPrintGtinUnit = row.dataset.isPrintGtinUnit;
+    const labelType = row.dataset.labelType;
     const printerId = row.dataset.printerId || '';
     const isActive = row.dataset.status === 'active';
 
-    editTemplate(id, name, productId, productGtin, productGtinUnit, productArticle, uipIncludeBatch, printerId, code, isPrintGtinUnit);
+    editTemplate(id, name, productId, productGtin, productGtinUnit, productArticle, uipIncludeBatch, printerId, code, isPrintGtinUnit, labelType);
 
     if (window.innerWidth < 1200) {
         document.querySelector('.form-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });

@@ -114,7 +114,10 @@ def detect_schema_revision(cur) -> str:
     if 'printers' not in tables:
         return 'bfd9a6d5bfd3'
 
-    # head: привязка продукта к UUID внешнего сервиса кодов (external_uuid).
+    # head: назначение шаблона — потребительская/групповая упаковка (label_type).
+    if has_column(cur, 'code_templates', 'label_type'):
+        return 'c2d3e4f5a6b7'
+    # привязка продукта к UUID внешнего сервиса кодов (external_uuid).
     if has_column(cur, 'products', 'external_uuid'):
         return 'b1c2d3e4f5a6'
     # печать DataMatrix-кодов из внешнего сервиса (is_print_gtin_unit).
