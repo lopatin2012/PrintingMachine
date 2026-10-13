@@ -10,6 +10,7 @@ pip install -r requirements.txt
 # Run dev server (auto-applies DB migrations, then creates tables + admin user on startup)
 uvicorn main:app --reload
 # Swagger UI at http://localhost:8000/api/docs
+# Windows-сервер: `run.bat` в корне — сам обновляет зависимости (pip install -r requirements.txt), UTF-8 в логах, порт 8111, не закрывает окно при падении
 
 # Run tests (pure unit tests — no DB, .env, or printer needed)
 python -m pytest
