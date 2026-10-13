@@ -32,8 +32,24 @@ if errorlevel 1 (
 )
 
 :: 2. Запуск сервиса.
-echo [2/2] Запуск сервиса печати на 0.0.0.0:8111...
-python -m uvicorn main:app --host 0.0.0.0 --port 8111
+:: Хост и порт берём из .env (SERVICE_HOST / SERVICE_PORT — те же имена, что
+:: читает main.py), чтобы не хардкодить их в скрипте. По умолчанию — 0.0.0.0:8111.
+set "SERVICE_HOST=0.0.0.0"
+set "SERVICE_PORT=8111"
+if exist "%~dp0.env" (
+    for /f "usebackq eol=# tokens=1,* delims== " %%A in ("%~dp0.env") do (
+        if /i "%%A"=="SERVICE_HOST" if not "%%~B"=="" set "SERVICE_HOST=%%~B"
+        if /i "%%A"=="SERVICE_PORT" if not "%%~B"=="" set "SERVICE_PORT=%%~B"
+    )
+)
+:: В .env значения могут быть в кавычках и с пробелами — снимаем их.
+if defined SERVICE_HOST set "SERVICE_HOST=%SERVICE_HOST:'=%"
+if defined SERVICE_PORT set "SERVICE_PORT=%SERVICE_PORT:'=%"
+if defined SERVICE_HOST set "SERVICE_HOST=%SERVICE_HOST: =%"
+if defined SERVICE_PORT set "SERVICE_PORT=%SERVICE_PORT: =%"
+
+echo [2/2] Запуск сервиса печати на %SERVICE_HOST%:%SERVICE_PORT%...
+python -m uvicorn main:app --host %SERVICE_HOST% --port %SERVICE_PORT%
 
 :: Если сервис остановился или упал — окно не закрываем, чтобы был виден текст
 :: ошибки (иначе консоль схлопывается и причину не видно).
