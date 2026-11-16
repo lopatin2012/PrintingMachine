@@ -19,7 +19,7 @@ from crud.workshop_user import WorkshopUserCRUD
 from crud.product import ProductCRUD
 from crud.printer import PrinterCRUD
 from crud.code_template import CodeTemplateCRUD
-from schemas import PrintJobCreate
+from schemas import PrintJobCreate, normalize_label_type
 from models import User, Workshop, Line, PrintJob, WorkshopUser, Product, Printer, CodeTemplate
 from services.print_queue import PrintTask
 from services.datamatrix_service import (
@@ -889,6 +889,7 @@ async def _build_zpl_response(
         marking_date: Optional[date],
         first_box: int,
         printer_id: Optional[UUID],
+        template_id: Optional[UUID] = None,
 ) -> dict:
     """Сборка ответа с ZPL активного шаблона продукта.
 
@@ -897,22 +898,40 @@ async def _build_zpl_response(
     `unit` — этикетка потребительской упаковки, `group` — этикетка групповой
     упаковки/набора; опционально — на конкретном принтере), подставляет данные
     продукта и query-параметры.
+
+    `template_id` имеет приоритет над `printer_id`: если он передан, берётся
+    именно этот активный шаблон продукта с нужным назначением.
     """
     if marking_date is None:
         marking_date = date.today()
 
-    template_query = select(CodeTemplate).where(
-        CodeTemplate.product_id == product.id,
-        CodeTemplate.is_active == True,
-        CodeTemplate.label_type == label_type,
-    )
-    if printer_id:
-        template_query = template_query.where(CodeTemplate.printer_id == printer_id)
+    if template_id:
+        template_query = select(CodeTemplate).where(
+            CodeTemplate.id == template_id,
+            CodeTemplate.product_id == product.id,
+            CodeTemplate.is_active == True,
+            CodeTemplate.label_type == label_type,
+        )
+    else:
+        template_query = select(CodeTemplate).where(
+            CodeTemplate.product_id == product.id,
+            CodeTemplate.is_active == True,
+            CodeTemplate.label_type == label_type,
+        )
+        if printer_id:
+            template_query = template_query.where(CodeTemplate.printer_id == printer_id)
+        template_query = template_query.order_by(desc(CodeTemplate.created_at)).limit(1)
 
-    template = (await db.execute(
-        template_query.order_by(desc(CodeTemplate.created_at)).limit(1)
-    )).scalar_one_or_none()
+    template = (await db.execute(template_query)).scalar_one_or_none()
     if not template:
+        if template_id:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    'Активный шаблон с указанным template_id не найден '
+                    f'(назначение: {label_type})'
+                ),
+            )
         raise HTTPException(
             status_code=404,
             detail=f'Активный шаблон для продукта не найден (назначение: {label_type})',
@@ -950,6 +969,69 @@ async def _build_zpl_response(
     }
 
 
+@router.get('/api/printing/templates-for-gtin')
+async def get_templates_by_gtin(
+        gtin: str = Query(..., description='GTIN групповой упаковки или единицы продукции'),
+        label_type: str = Query('group', description='Назначение: group или unit'),
+        db: AsyncSession = Depends(get_db),
+):
+    """Публичный список активных шаблонов продукта по GTIN.
+
+    Нужен терминалу, чтобы предложить оператору выбор шаблона, если у продукта
+    несколько активных шаблонов нужного назначения. Авторизация не требуется,
+    как и у публичных методов выдачи ZPL.
+    """
+    try:
+        normalized_type = normalize_label_type(label_type)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail='label_type должен быть group или unit.',
+        )
+
+    if normalized_type == 'unit':
+        product = await product_crud.get_by_gtin_unit(db, gtin)
+    else:
+        product = await product_crud.get_by_gtin(db, gtin)
+    if not product:
+        raise HTTPException(status_code=404, detail='Продукт с таким GTIN не найден')
+
+    templates = (await db.execute(
+        select(CodeTemplate)
+        .options(selectinload(CodeTemplate.printer))
+        .where(
+            CodeTemplate.product_id == product.id,
+            CodeTemplate.is_active == True,
+            CodeTemplate.label_type == normalized_type,
+        )
+        .order_by(desc(CodeTemplate.created_at), CodeTemplate.name)
+    )).scalars().all()
+
+    return {
+        'product_id': str(product.id),
+        'gtin': product.gtin if normalized_type == 'group' else product.gtin_unit,
+        'label_type': normalized_type,
+        'templates': [_template_list_item(template) for template in templates],
+    }
+
+
+def _template_list_item(template: CodeTemplate) -> dict:
+    """Строка списка шаблонов для выбора (терминал/внешняя интеграция)."""
+    return {
+        'id': str(template.id),
+        'name': template.name,
+        'printer_id': str(template.printer_id),
+        'printer_name': (
+            template.printer.name if template.printer else 'Неизвестный принтер'
+        ),
+        'created_at': (
+            template.created_at.isoformat() if template.created_at else None
+        ),
+        # Для набора: шаблон должен содержать DataMatrix набора.
+        'has_datamatrix_s': '{datamatrix_s}' in (template.print_code or ''),
+    }
+
+
 @router.get('/api/printing/zpl')
 async def get_zpl_by_gtin(
         gtin: str = Query(..., description='GTIN групповой упаковки'),
@@ -958,6 +1040,9 @@ async def get_zpl_by_gtin(
         first_box: int = Query(1, ge=1, description='Номер первой коробки'),
         printer_id: Optional[UUID] = Query(
             None, description='id принтера, если у продукта несколько активных шаблонов'
+        ),
+        template_id: Optional[UUID] = Query(
+            None, description='id шаблона; имеет приоритет над printer_id'
         ),
         db: AsyncSession = Depends(get_db),
 ):
@@ -984,6 +1069,7 @@ async def get_zpl_by_gtin(
         marking_date=marking_date,
         first_box=first_box,
         printer_id=printer_id,
+        template_id=template_id,
     )
 
 
@@ -995,6 +1081,9 @@ async def get_zpl_by_gtin_unit(
         first_box: int = Query(1, ge=1, description='Номер первой коробки'),
         printer_id: Optional[UUID] = Query(
             None, description='id принтера, если у продукта несколько активных шаблонов'
+        ),
+        template_id: Optional[UUID] = Query(
+            None, description='id шаблона; имеет приоритет над printer_id'
         ),
         db: AsyncSession = Depends(get_db),
 ):
@@ -1017,6 +1106,7 @@ async def get_zpl_by_gtin_unit(
         marking_date=marking_date,
         first_box=first_box,
         printer_id=printer_id,
+        template_id=template_id,
     )
 
 
