@@ -890,6 +890,7 @@ async def _build_zpl_response(
         first_box: int,
         printer_id: Optional[UUID],
         template_id: Optional[UUID] = None,
+        expiration_date: Optional[date] = None,
 ) -> dict:
     """Сборка ответа с ZPL активного шаблона продукта.
 
@@ -901,6 +902,9 @@ async def _build_zpl_response(
 
     `template_id` имеет приоритет над `printer_id`: если он передан, берётся
     именно этот активный шаблон продукта с нужным назначением.
+
+    `expiration_date` — срок годности из задания (например, набора). Если не
+    передан, вычисляется как marking_date + product.date_expiration.
     """
     if marking_date is None:
         marking_date = date.today()
@@ -937,13 +941,16 @@ async def _build_zpl_response(
             detail=f'Активный шаблон для продукта не найден (назначение: {label_type})',
         )
 
-    expiration_date = marking_date + timedelta(days=product.date_expiration or 0)
+    expiration_date = expiration_date or (
+        marking_date + timedelta(days=product.date_expiration or 0)
+    )
 
     zpl_code = build_product_zpl(
         template.print_code,
         product=product,
         batch_number=batch_number.strip(),
         marking_date=marking_date,
+        expiration_date=expiration_date,
         current_box=first_box,
         uip_include_batch=bool(template.uip_include_batch),
     )
@@ -1015,6 +1022,16 @@ async def get_templates_by_gtin(
     }
 
 
+def _has_set_datamatrix(print_code: str) -> bool:
+    """Есть ли в шаблоне DataMatrix для кода набора.
+
+    Подходит плейсхолдер `{datamatrix_s}` или готовое поле `^BXN`/`^BXR`:
+    терминал заменит образец кода в поле на реальный КИН.
+    """
+    code = print_code or ''
+    return '{datamatrix_s}' in code or '^BXN' in code or '^BXR' in code
+
+
 def _template_list_item(template: CodeTemplate) -> dict:
     """Строка списка шаблонов для выбора (терминал/внешняя интеграция)."""
     return {
@@ -1028,7 +1045,7 @@ def _template_list_item(template: CodeTemplate) -> dict:
             template.created_at.isoformat() if template.created_at else None
         ),
         # Для набора: шаблон должен содержать DataMatrix набора.
-        'has_datamatrix_s': '{datamatrix_s}' in (template.print_code or ''),
+        'has_datamatrix_s': _has_set_datamatrix(template.print_code),
     }
 
 
@@ -1037,6 +1054,10 @@ async def get_zpl_by_gtin(
         gtin: str = Query(..., description='GTIN групповой упаковки'),
         batch_number: str = Query('01', description='Номер партии'),
         marking_date: Optional[date] = Query(None, description='Дата маркировки (YYYY-MM-DD), по умолчанию — сегодня'),
+        expiration_date: Optional[date] = Query(
+            None,
+            description='Срок годности (YYYY-MM-DD); если не передан — marking_date + срок продукта',
+        ),
         first_box: int = Query(1, ge=1, description='Номер первой коробки'),
         printer_id: Optional[UUID] = Query(
             None, description='id принтера, если у продукта несколько активных шаблонов'
@@ -1053,8 +1074,9 @@ async def get_zpl_by_gtin(
     потребительской упаковки). Данные, которые есть в продукте (GTIN, GTIN
     единицы, артикул, срок годности), подставляются из БД. Данные, которых в
     продукте нет (партия, дата маркировки, номер коробки), передаются
-    query-параметрами. Дата окончания срока годности вычисляется как дата
-    маркировки + срок годности продукта. Партия (по умолчанию '01') и дата
+    query-параметрами. Срок годности по умолчанию вычисляется как дата
+    маркировки + срок годности продукта; `expiration_date` позволяет передать
+    срок из задания (например, набора). Партия (по умолчанию '01') и дата
     маркировки (по умолчанию — сегодня) необязательны. Авторизация не
     требуется — метод рассчитан на внешнюю интеграцию.
     """
@@ -1070,6 +1092,7 @@ async def get_zpl_by_gtin(
         first_box=first_box,
         printer_id=printer_id,
         template_id=template_id,
+        expiration_date=expiration_date,
     )
 
 
@@ -1078,6 +1101,10 @@ async def get_zpl_by_gtin_unit(
         gtin_unit: str = Query(..., description='GTIN единицы продукции'),
         batch_number: str = Query('01', description='Номер партии'),
         marking_date: Optional[date] = Query(None, description='Дата маркировки (YYYY-MM-DD), по умолчанию — сегодня'),
+        expiration_date: Optional[date] = Query(
+            None,
+            description='Срок годности (YYYY-MM-DD); если не передан — marking_date + срок продукта',
+        ),
         first_box: int = Query(1, ge=1, description='Номер первой коробки'),
         printer_id: Optional[UUID] = Query(
             None, description='id принтера, если у продукта несколько активных шаблонов'
@@ -1093,7 +1120,8 @@ async def get_zpl_by_gtin_unit(
     берётся с назначением `unit` — этикетка потребительской упаковки
     (УИП/DataMatrix). Остальные правила подстановки те же, что у
     `/api/printing/zpl`: данные продукта — из БД, партия/дата маркировки/номер
-    коробки — query-параметрами, срок годности вычисляется автоматически.
+    коробки — query-параметрами, срок годности вычисляется автоматически или
+    берётся из `expiration_date`.
     """
     product = await product_crud.get_by_gtin_unit(db, gtin_unit)
     if not product:
@@ -1107,6 +1135,7 @@ async def get_zpl_by_gtin_unit(
         first_box=first_box,
         printer_id=printer_id,
         template_id=template_id,
+        expiration_date=expiration_date,
     )
 
 

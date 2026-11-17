@@ -321,6 +321,7 @@ def build_product_zpl(
     product,
     batch_number: str,
     marking_date: date,
+    expiration_date: date | None = None,
     current_box: int = 1,
     uip_include_batch: bool = True,
     datamatrix: str = '',
@@ -330,12 +331,13 @@ def build_product_zpl(
     Данные, которые есть в продукте (GTIN групповой упаковки, GTIN единицы,
     артикул, срок годности), берутся из `product`; недостающие (партия, дата
     маркировки, номер коробки) передаются параметрами. Дата окончания срока
-    годности вычисляется как marking_date + product.date_expiration — вручную
-    не задаётся.
+    годности по умолчанию вычисляется как marking_date + product.date_expiration;
+    если передан `expiration_date` (например, срок из задания набора), берётся он.
 
     Используется публичным API отдачи ZPL по GTIN групповой упаковки.
     """
-    expiration_date = marking_date + timedelta(days=product.date_expiration or 0)
+    if expiration_date is None:
+        expiration_date = marking_date + timedelta(days=product.date_expiration or 0)
     return substitute_placeholders(
         zpl_code,
         batch_number=batch_number,
