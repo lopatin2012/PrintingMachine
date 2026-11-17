@@ -1015,6 +1015,16 @@ async def get_templates_by_gtin(
     }
 
 
+def _has_set_datamatrix(print_code: str) -> bool:
+    """Есть ли в шаблоне DataMatrix для кода набора.
+
+    Подходит плейсхолдер `{datamatrix_s}` или готовое поле `^BXN`/`^BXR`:
+    терминал заменит образец кода в поле на реальный КИН.
+    """
+    code = print_code or ''
+    return '{datamatrix_s}' in code or '^BXN' in code or '^BXR' in code
+
+
 def _template_list_item(template: CodeTemplate) -> dict:
     """Строка списка шаблонов для выбора (терминал/внешняя интеграция)."""
     return {
@@ -1028,7 +1038,7 @@ def _template_list_item(template: CodeTemplate) -> dict:
             template.created_at.isoformat() if template.created_at else None
         ),
         # Для набора: шаблон должен содержать DataMatrix набора.
-        'has_datamatrix_s': '{datamatrix_s}' in (template.print_code or ''),
+        'has_datamatrix_s': _has_set_datamatrix(template.print_code),
     }
 
 

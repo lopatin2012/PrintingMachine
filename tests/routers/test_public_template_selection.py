@@ -87,10 +87,22 @@ def test_unknown_template_id_returns_404():
 def test_template_list_item_marks_set_datamatrix():
     product = _product()
     set_template = _template(product, code='^XA^FD{datamatrix_s}^FS^XZ')
+    ready_template = _template(
+        product,
+        code='^XA^FO19,162^BXN,3,200,,,,\\,1^FD0104601751016584215SAMPLE^FS^XZ',
+    )
     box_template = _template(product, code='^XA^FD{datamatrix_g}^FS^XZ')
+    ean_template = _template(
+        product,
+        code='^XA^FO554,12^BY2^BEN,30,Y,N^FD4601751030566^FS^XZ',
+    )
 
     item = _template_list_item(set_template)
     assert item['id'] == str(set_template.id)
     assert item['name'] == 'Шаблон'
     assert item['has_datamatrix_s'] is True
+    # Готовое поле DataMatrix без {datamatrix_s} тоже пригодно для набора:
+    # терминал заменит образец кода на реальный КИН.
+    assert _template_list_item(ready_template)['has_datamatrix_s'] is True
     assert _template_list_item(box_template)['has_datamatrix_s'] is False
+    assert _template_list_item(ean_template)['has_datamatrix_s'] is False
