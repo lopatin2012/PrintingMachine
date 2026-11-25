@@ -182,6 +182,101 @@ def check_printer_status(ip: str, port: int = 9100, timeout: float = 3.0) -> dic
             return {'ok': False, 'error': str(e)}
     return {'ok': False, 'error': 'Empty response'}
 
+
+# Описание плейсхолдеров шаблона: (плейсхолдер, человекочитаемое описание).
+# Порядок используется в редакторе шаблонов для подсказки с подставляемыми
+# значениями. Список должен совпадать с набором, который обрабатывает
+# substitute_placeholders().
+PLACEHOLDER_INFO = [
+    ('{gs1_gtin}', 'GTIN групповой упаковки'),
+    ('{gs1_gtin_short}', 'GTIN групповой упаковки без ведущего нуля'),
+    ('{uip_gtin}', 'GTIN единицы продукции (14 цифр)'),
+    ('{uip_article}', 'Артикул продукта'),
+    ('{uip_marking_date}', 'Дата производства в УИП (ГГММДД)'),
+    ('{uip_batch}', 'Серийная часть УИП (партия или нули)'),
+    ('{gs1_128_marking_date}', 'GS1: дата маркировки (ГГММДД)'),
+    ('{gs1_128_expiry_date}', 'GS1: срок годности (ГГММДД)'),
+    ('{gs1_128_expiration_date}', 'GS1: срок годности, алиас (ГГММДД)'),
+    ('{gs1_gs}', 'GS1: символ-разделитель полей (GS)'),
+    ('{gs1_128_batch}', 'GS1: партия = дата маркировки (ДДММГГ)'),
+    ('{gs1_128_batch_number}', 'GS1: партия, алиас (ДДММГГ)'),
+    ('{gs1_128_current_box}', 'GS1: номер коробки (5 знаков)'),
+    ('{current_box}', 'Номер коробки, алиас (5 знаков)'),
+    ('{marking_date_str}', 'Дата маркировки ДД.ММ.ГГ'),
+    ('{expiration_date_str}', 'Срок годности ДД.ММ.ГГ'),
+    ('{batch_number_str}', 'Партия(ДДММГГ)'),
+    ('{batch_number}', 'Номер партии как есть'),
+    ('{datamatrix}', 'Код DataMatrix из внешнего сервиса'),
+]
+
+
+def compute_placeholder_values(
+    zpl_code: str,
+    *,
+    batch_number: str,
+    marking_date: date,
+    expiration_date: date,
+    current_box: int,
+    gtin: str = '',
+    gtin_unit: str = '',
+    article: str = '',
+    uip_include_batch: bool = True,
+    datamatrix: str = ''
+) -> dict:
+    """Возвращает словарь {плейсхолдер: значение} для подсказки в редакторе.
+
+    Значения вычисляются по той же логике, что и в substitute_placeholders(),
+    поэтому в редакторе шаблонов видно ровно то, что уйдёт в этикетку. Часть
+    значений (например, {uip_batch}) зависит от наличия плейсхолдера артикула
+    в шаблоне — как и при реальной подстановке.
+
+    Возвращает dict со всеми плейсхолдерами из PLACEHOLDER_INFO.
+    """
+    # Наличие плейсхолдера артикула влияет на длину серийной части УИП.
+    uip_article_in_template = '{uip_article}' in zpl_code
+
+    clean_gtin = gtin.strip() if (gtin and gtin.strip()) else ''
+    clean_gtin_unit = gtin_unit.strip() if (gtin_unit and gtin_unit.strip()) else ''
+    clean_article = article.strip() if (article and article.strip()) else ''
+
+    gs1_marking = marking_date.strftime('%y%m%d')
+    gs1_expiration = expiration_date.strftime('%y%m%d')
+    gs1_party = marking_date.strftime('%d%m%y')
+    box_str = f'{current_box:05d}'
+    marking_fmt = marking_date.strftime('%d.%m.%y')
+    expiration_fmt = expiration_date.strftime('%d.%m.%y')
+    marking_batch_number = marking_date.strftime('%d%m%y')
+
+    article_length = len(clean_article) if uip_article_in_template else 0
+    batch_slot = max(0, UIP_TARGET_LENGTH - 14 - 6 - article_length)
+    if uip_include_batch:
+        uip_batch_value = process_uip_batch(batch_number, length=batch_slot)
+    else:
+        uip_batch_value = '0' * batch_slot
+
+    return {
+        '{gs1_gtin}': clean_gtin,
+        '{gs1_gtin_short}': clean_gtin[1:] if clean_gtin else '',
+        '{uip_gtin}': clean_gtin_unit,
+        '{uip_article}': clean_article,
+        '{uip_marking_date}': gs1_marking,
+        '{uip_batch}': uip_batch_value,
+        '{gs1_128_marking_date}': gs1_marking,
+        '{gs1_128_expiry_date}': gs1_expiration,
+        '{gs1_128_expiration_date}': gs1_expiration,
+        '{gs1_gs}': '\x1d',
+        '{gs1_128_batch}': gs1_party,
+        '{gs1_128_batch_number}': gs1_party,
+        '{gs1_128_current_box}': box_str,
+        '{current_box}': box_str,
+        '{marking_date_str}': marking_fmt,
+        '{expiration_date_str}': expiration_fmt,
+        '{batch_number_str}': f'{batch_number}({marking_batch_number})',
+        '{batch_number}': batch_number,
+        '{datamatrix}': datamatrix or '',
+    }
+
+
 def substitute_placeholders(
     zpl_code: str,
     *,
@@ -612,6 +707,43 @@ def check_printer_status_by_type(ip: str, port: int = 9100,
     """
     from helpers.printer_drivers import get_driver_or_default
     return get_driver_or_default(printer_type).status(ip, port, timeout)
+
+
+# Причины недоступности → человекочитаемые подсказки. Ключи сравниваются
+# подстрокой без учёта регистра (драйверы возвращают 'Timeout',
+# 'ConnectionRefused', 'Empty response' или текст системной ошибки).
+_PRINTER_ERROR_HINTS = (
+    ('timeout', 'нет ответа (таймаут)'),
+    ('connectionrefused', 'отказ в подключении'),
+    ('connection refused', 'отказ в подключении'),
+    ('empty response', 'принтер не ответил'),
+)
+
+
+def describe_printer_unavailable(status: dict) -> str:
+    """Кратко описывает причину недоступности принтера по словарю статуса."""
+    error = str((status or {}).get('error') or '').strip()
+    if not error:
+        return 'нет связи'
+    lowered = error.lower()
+    for marker, hint in _PRINTER_ERROR_HINTS:
+        if marker in lowered:
+            return hint
+    return error
+
+
+def printer_unavailable_message(printer_name: str, status: dict) -> str:
+    """Сообщение пользователю: принтер недоступен, задание не отправлено.
+
+    Используется и в предварительной проверке на странице печати, и в
+    POST /printing/start (авторитетная проверка перед запросом кодов).
+    """
+    reason = describe_printer_unavailable(status)
+    return (
+        f'Принтер "{printer_name}" недоступен: {reason}. '
+        f'Задание не создано, коды DataMatrix не запрашивались.'
+    )
+
 
 
 def send_printer_command(ip: str, port: int, command: bytes,

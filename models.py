@@ -163,6 +163,7 @@ class CodeTemplate(Base):
     uip_include_batch = Column(Boolean, default=False, nullable=False, server_default='false', comment='Включать партию в УИП')
     is_print_gtin_unit = Column(Boolean, default=False, nullable=False, server_default='false', comment='Печатать DataMatrix-коды из внешнего сервиса (плейсхолдер {datamatrix})')
     label_type = Column(String(20), default='group', nullable=False, server_default='group', comment='Назначение шаблона: unit — потребительская упаковка, group — групповая упаковка/набор')
+    disable_dm_positioning = Column(Boolean, default=False, nullable=False, server_default='false', comment='Выключить позиционирование DataMatrix в редакторе (не показывать координаты и рамки)')
     created_at = Column(MoscowDateTime(), server_default=func.now(), comment='Дата добавления')
     edited_at = Column(MoscowDateTime(), server_default=func.now(), onupdate=func.now(), comment='Дата редактирования')
 
