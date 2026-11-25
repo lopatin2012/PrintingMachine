@@ -819,26 +819,69 @@ function setupFormValidation() {
     const form      = document.getElementById('printForm');
     const submitBtn = document.getElementById('printSubmitBtn');
     if (!form || !submitBtn) return;
-    form.addEventListener('submit', function (e) {
+    form.addEventListener('submit', async function (e) {
         const firstBox    = parseInt(document.getElementById('firstBox').value)  || 0;
         const lastBox     = parseInt(document.getElementById('lastBox').value)   || 0;
         const batchNumber = document.getElementById('batchNumber').value.trim();
         if (!batchNumber) { e.preventDefault(); alert('Введите номер партии'); document.getElementById('batchNumber').focus(); return; }
         if (firstBox <= 0 || lastBox <= 0) { e.preventDefault(); alert('Номера коробок должны быть больше 0'); return; }
         if (firstBox > lastBox) { e.preventDefault(); alert('Номер первой коробки не может быть больше номера последней'); return; }
+
+        // Отправляем форму вручную: сначала проверяем принтер, чтобы при
+        // недоступном принтере не скачивать коды DataMatrix и не создавать
+        // задание (никакие коды никуда не уходят).
+        e.preventDefault();
         submitBtn.disabled = true;
         submitBtn.querySelector('.btn-text').textContent = 'Запуск печати...';
         submitBtn.querySelector('.btn-spinner').classList.remove('hidden');
 
+        const printerId = document.getElementById('printerSelect')?.value;
+        const availability = await checkPrinterAvailable(printerId);
+        if (availability && availability.ok === false) {
+            resetPrintSubmitButton();
+            alert('⚠️ ' + (availability.message || 'Принтер недоступен. Задание не отправлено.'));
+            return;
+        }
+
         // Для DataMatrix-этикеток перед печатью выкачиваем текстовый файл
         // со всеми кодами, которые будут напечатаны (флаг is_print_gtin_unit).
         if (currentIsPrintGtinUnit) {
-            e.preventDefault();
+            await downloadCodesTxt();
             // Небольшая пауза перед отправкой формы, чтобы браузер успел
             // начать скачивание файла до перехода на страницу результата.
-            downloadCodesTxt().finally(() => setTimeout(() => form.submit(), 500));
+            setTimeout(() => form.submit(), 500);
+        } else {
+            form.submit();
         }
     });
+}
+
+/**
+ * Проверяет доступность принтера перед печатью.
+ * Возвращает {ok, message} или null, если проверить не удалось (тогда
+ * решение принимает бэкенд при обработке формы).
+ */
+async function checkPrinterAvailable(printerId) {
+    if (!printerId) return null;
+    try {
+        const resp = await fetch(`/api/printing/printers/${printerId}/status`);
+        if (!resp.ok) return null;
+        return await resp.json();
+    } catch (err) {
+        console.warn('Не удалось проверить доступность принтера:', err);
+        return null;
+    }
+}
+
+/** Возвращает кнопку печати в исходное состояние после отмены. */
+function resetPrintSubmitButton() {
+    const btn = document.getElementById('printSubmitBtn');
+    if (!btn) return;
+    btn.disabled = false;
+    const text = btn.querySelector('.btn-text');
+    if (text) text.textContent = 'Напечатать';
+    const spinner = btn.querySelector('.btn-spinner');
+    if (spinner) spinner.classList.add('hidden');
 }
 
 // ─── ОСТАНОВКА ЗАДАНИЯ ───────────────────────────────────────────────────────

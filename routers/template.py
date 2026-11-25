@@ -7,7 +7,7 @@ from uuid import UUID
 from typing import Optional
 
 from fastapi import APIRouter, Form, Request, Depends, HTTPException, status, Query
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, Response, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 
@@ -29,13 +29,34 @@ from services.preview_renderer import render_preview_png
 from services.datamatrix_renderer import datamatrix_fields_layout
 
 from helpers.responses import ajax_or_redirect
-from helpers.printers import substitute_placeholders
+from helpers.printers import (
+    PLACEHOLDER_INFO,
+    compute_placeholder_values,
+    substitute_placeholders,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=['templates'])
 template_crud = CodeTemplateCRUD()
 product_crud = ProductCRUD()
 printer_crud = PrinterCRUD()
+
+
+def build_dm_layout_header(
+    zpl_code: str,
+    sample_data: str = '',
+    *,
+    disable_positioning: bool = False,
+):
+    """JSON для заголовка X-DM-Layout (раскладка DataMatrix) или None.
+
+    None возвращается, когда позиционирование DataMatrix выключено в
+    настройках шаблона: фронтенд тогда не рисует рамки и координаты.
+    """
+    if disable_positioning:
+        return None
+    layout = datamatrix_fields_layout(zpl_code, sample_data=sample_data)
+    return json.dumps(layout, ensure_ascii=True, separators=(',', ':'))
 
 
 def _sample_datamatrix_code(gtin: str = '') -> str:
@@ -48,6 +69,61 @@ def _sample_datamatrix_code(gtin: str = '') -> str:
     gtin14 = (clean or '04601751029232')[:14].ljust(14, '0')
     # 01 — GTIN, 21 — серийный номер, GS + 93 — демо-хвост.
     return f'01{gtin14}21PREVIEW00001\x1d93DEMO'
+
+
+async def _resolve_preview_dates(
+    db: AsyncSession,
+    *,
+    marking_date: str,
+    expiration_date: str,
+    product_id: str,
+    date_expiration: str,
+):
+    """Даты маркировки и срока годности для предпросмотра (marking_dt, expiration_dt).
+
+    Приоритет срока годности: явный `expiration_date` (YYMMDD) → срок годности
+    продукта из БД (`product_id` → `product.date_expiration`) → `date_expiration`
+    (в днях) → +7 дней (значение по умолчанию для предпросмотра). Общая логика
+    для рендера превью и подсказки по плейсхолдерам.
+    """
+    from datetime import datetime, timedelta
+
+    md = marking_date.strip()[:6]
+    try:
+        marking_dt = (
+            datetime.strptime(md, '%d%m%y').date()
+            if len(md) == 6
+            else datetime.today().date()
+        )
+    except ValueError:
+        marking_dt = datetime.today().date()
+
+    ed = (expiration_date or '').strip()[:6]
+    expiration_dt = None
+    if len(ed) == 6:
+        try:
+            expiration_dt = datetime.strptime(ed, '%d%m%y').date()
+        except ValueError:
+            expiration_dt = None
+
+    if expiration_dt is None:
+        exp_days = 0
+        pid = (product_id or '').strip()
+        if pid:
+            try:
+                product = await product_crud.get(db, UUID(pid))
+            except ValueError:
+                product = None
+            if product is not None:
+                exp_days = product.date_expiration
+        if exp_days <= 0:
+            try:
+                exp_days = int((date_expiration or '').strip() or 0)
+            except ValueError:
+                exp_days = 0
+        expiration_dt = marking_dt + timedelta(days=exp_days if exp_days > 0 else 7)
+
+    return marking_dt, expiration_dt
 
 
 @router.get('/templates', response_class=HTMLResponse)
@@ -105,6 +181,7 @@ async def template_create(
         uip_include_batch: bool = Form(False),
         is_print_gtin_unit: bool = Form(False),
         label_type: str = Form('group'),
+        disable_dm_positioning: bool = Form(False),
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_admin),
         endpoint: str='/templates'
@@ -175,6 +252,7 @@ async def template_create(
         uip_include_batch=uip_include_batch,
         is_print_gtin_unit=is_print_gtin_unit,
         label_type=label_type,
+        disable_dm_positioning=disable_dm_positioning,
     )
     template = await template_crud.create(db, template_data)
 
@@ -198,6 +276,7 @@ async def template_create(
             'uip_include_batch': bool(template.uip_include_batch),
             'is_print_gtin_unit': bool(template.is_print_gtin_unit),
             'label_type': template.label_type,
+            'disable_dm_positioning': bool(template.disable_dm_positioning),
             'print_code': template.print_code,
             'created_at': template.created_at.isoformat() if hasattr(template, 'created_at') else None,
         }
@@ -223,6 +302,7 @@ async def template_update(
         uip_include_batch: bool = Form(False),
         is_print_gtin_unit: bool = Form(False),
         label_type: str = Form('group'),
+        disable_dm_positioning: bool = Form(False),
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_admin),
         endpoint: str = '/templates'
@@ -313,6 +393,7 @@ async def template_update(
         uip_include_batch=uip_include_batch,
         is_print_gtin_unit=is_print_gtin_unit,
         label_type=label_type,
+        disable_dm_positioning=disable_dm_positioning,
     )
     updated = await template_crud.update(db, template_id, template_data)
 
@@ -329,6 +410,7 @@ async def template_update(
                 'uip_include_batch': bool(updated.uip_include_batch),
                 'is_print_gtin_unit': bool(updated.is_print_gtin_unit),
                 'label_type': updated.label_type,
+                'disable_dm_positioning': bool(updated.disable_dm_positioning),
                 'updated_at': updated.updated_at.isoformat() if hasattr(updated, 'updated_at') else None,
             }
         }
@@ -589,6 +671,7 @@ async def render_template_preview(
         article: str = Form(''),
         datamatrix: str = Form(''),
         uip_include_batch: bool = Form(False),
+        disable_dm_positioning: bool = Form(False),
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_user)
 ):
@@ -602,48 +685,15 @@ async def render_template_preview(
     реальной печати); если продукт не указан — из date_expiration (дней);
     иначе — +7 дней (для предпросмотра).
     """
-    from datetime import datetime, timedelta
-
     try:
-        # ── Парсим marking_date из YYMMDD → объект date
-        md = marking_date.strip()[:6]
-        try:
-            marking_dt = (
-                datetime.strptime(md, '%d%m%y').date()
-                if len(md) == 6
-                else datetime.today().date()
-            )
-        except ValueError:
-            marking_dt = datetime.today().date()
-
-        # ── expiration_date: приоритет 1 — явный срок годности (expiration_date);
-        #    приоритет 2 — срок годности продукта из БД (marking + product.date_expiration);
-        #    приоритет 3 — срок годности в днях из формы (date_expiration);
-        #    если ничего нет — +7 дней (для предпросмотра).
-        ed = (expiration_date or '').strip()[:6]
-        expiration_dt = None
-        if len(ed) == 6:
-            try:
-                expiration_dt = datetime.strptime(ed, '%d%m%y').date()
-            except ValueError:
-                expiration_dt = None
-
-        if expiration_dt is None:
-            exp_days = 0
-            pid = (product_id or '').strip()
-            if pid:
-                try:
-                    product = await product_crud.get(db, UUID(pid))
-                except ValueError:
-                    product = None
-                if product is not None:
-                    exp_days = product.date_expiration
-            if exp_days <= 0:
-                try:
-                    exp_days = int((date_expiration or '').strip() or 0)
-                except ValueError:
-                    exp_days = 0
-            expiration_dt = marking_dt + timedelta(days=exp_days if exp_days > 0 else 7)
+        # ── Даты маркировки и срока годности (общая логика с подсказкой).
+        marking_dt, expiration_dt = await _resolve_preview_dates(
+            db,
+            marking_date=marking_date,
+            expiration_date=expiration_date,
+            product_id=product_id,
+            date_expiration=date_expiration,
+        )
 
         # Для предпросмотра DataMatrix: если в шаблоне есть плейсхолдер
         # {datamatrix}, а реальный код не передан — подставляем демо-код,
@@ -679,13 +729,16 @@ async def render_template_preview(
             # Раскладка DataMatrix для интерактивного перетаскивания в
             # редакторе шаблонов. Считается по ИСХОДНОМУ zpl_code (с
             # плейсхолдерами), чтобы фронтенд мог найти то же поле по индексу.
+            # Если позиционирование DM выключено в настройках шаблона —
+            # заголовок не отдаём: редактор не рисует рамки и координаты.
             try:
-                layout = datamatrix_fields_layout(
-                    zpl_code, sample_data=preview_datamatrix,
+                layout_header = build_dm_layout_header(
+                    zpl_code,
+                    preview_datamatrix,
+                    disable_positioning=disable_dm_positioning,
                 )
-                headers['X-DM-Layout'] = json.dumps(
-                    layout, ensure_ascii=True, separators=(',', ':'),
-                )
+                if layout_header is not None:
+                    headers['X-DM-Layout'] = layout_header
             except Exception as layout_err:  # noqa: BLE001 - превью важнее
                 logger.warning(
                     'Не удалось вычислить раскладку DataMatrix: %s', layout_err,
@@ -711,6 +764,82 @@ async def render_template_preview(
             status_code=500,
             detail=f'Ошибка генерации предпросмотра: {str(e)}'
         )
+
+
+@router.post('/templates/preview/placeholders')
+async def template_preview_placeholders(
+        request: Request,
+        zpl_code: str = Form(...),
+        batch_number: str = Form('01'),
+        marking_date: str = Form('260305'),   # формат YYMMDD
+        expiration_date: str = Form(''),      # формат YYMMDD, если пусто — вычисляется
+        product_id: str = Form(''),           # id продукта: срок годности берётся из БД
+        date_expiration: str = Form(''),      # срок годности в днях (запасной вариант)
+        current_box: int = Form(1),
+        gtin: str = Form(''),
+        gtin_unit: str = Form(''),
+        article: str = Form(''),
+        datamatrix: str = Form(''),
+        uip_include_batch: bool = Form(False),
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_user),
+):
+    """Список плейсхолдеров шаблона и подставляемых в них значений.
+
+    Используется подсказкой в редакторе шаблонов: те же параметры, что и у
+    предпросмотра, поэтому значения совпадают с реальной подстановкой.
+    Каждый элемент содержит сам плейсхолдер, его описание, вычисленное
+    значение и признак `used` — встречается ли плейсхолдер в текущем коде.
+    """
+    try:
+        marking_dt, expiration_dt = await _resolve_preview_dates(
+            db,
+            marking_date=marking_date,
+            expiration_date=expiration_date,
+            product_id=product_id,
+            date_expiration=date_expiration,
+        )
+
+        preview_datamatrix = (datamatrix or '').strip()
+        if not preview_datamatrix and '{datamatrix}' in zpl_code:
+            preview_datamatrix = _sample_datamatrix_code(gtin_unit or gtin)
+
+        values = compute_placeholder_values(
+            zpl_code,
+            batch_number=batch_number,
+            marking_date=marking_dt,
+            expiration_date=expiration_dt,
+            current_box=current_box,
+            gtin=gtin,
+            gtin_unit=gtin_unit,
+            article=article,
+            uip_include_batch=uip_include_batch,
+            datamatrix=preview_datamatrix,
+        )
+
+        items = [
+            {
+                'placeholder': placeholder,
+                'description': description,
+                'value': values.get(placeholder, ''),
+                'used': placeholder in zpl_code,
+            }
+            for placeholder, description in PLACEHOLDER_INFO
+        ]
+
+        return JSONResponse({
+            'placeholders': items,
+            'used_count': sum(1 for item in items if item['used']),
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f'Ошибка получения плейсхолдеров: {e}')
+        raise HTTPException(
+            status_code=500,
+            detail=f'Ошибка получения плейсхолдеров: {str(e)}'
+        )
+
 
 @router.post('/templates/preview/render_local')
 async def render_template_preview_local(

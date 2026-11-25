@@ -28,7 +28,11 @@ from services.datamatrix_service import (
     fetch_datamatrix_codes_by_uuid,
 )
 from helpers.printer_drivers import printer_type_label
-from helpers.printers import build_product_zpl
+from helpers.printers import (
+    build_product_zpl,
+    check_printer_status_async,
+    printer_unavailable_message,
+)
 from services.codes_pdf import build_codes_pdf, printer_dpi
 from services.codes_text import build_codes_text
 from services.datamatrix_renderer import module_dots_from_zpl
@@ -186,6 +190,25 @@ async def start_printing(
 
     expiration_date = marking_date + timedelta(days=product.date_expiration)
     boxes_count = last_box - first_box + 1
+
+    # ── Проверка доступности принтера ────────────────────────────────────────
+    # Принтер может быть выключен/вне сети. Тогда задание не создаём и коды
+    # DataMatrix не запрашиваем: иначе пользователь скачает коды, которые
+    # никуда не уйдут. Проверку дублирует фронтенд перед выгрузкой .txt,
+    # но здесь она авторитетная.
+    printer_status = await check_printer_status_async(
+        printer.ip_address,
+        printer.port_address,
+        printer.printer_type,
+        timeout=3.0,
+    )
+    if not printer_status.get('ok'):
+        msg = printer_unavailable_message(printer.name, printer_status)
+        logger.warning('Печать отменена (%s): %s', current_user.login, msg)
+        return RedirectResponse(
+            url=f'/printing?error={quote(msg)}',
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
 
     # ── DataMatrix из внешнего сервиса (по UUID продукта) ─────────────────────
     # Если в шаблоне включён флаг is_print_gtin_unit — запрашиваем коды
@@ -612,6 +635,69 @@ async def get_available_printers(
             for p in printers
         ]
     }
+
+@router.get('/api/printing/printers/{printer_id}/status')
+async def get_printer_availability(
+        printer_id: UUID,
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_user)
+):
+    """Проверка доступности принтера перед постановкой задания.
+
+    Вызывается со страницы печати ДО выгрузки кодов DataMatrix и отправки
+    формы, чтобы при недоступном принтере показать уведомление и не
+    запрашивать коды у внешнего сервиса.
+    """
+    workshop_access = await db.execute(
+        select(WorkshopUser).where(
+            WorkshopUser.user_id == current_user.id,
+            WorkshopUser.is_active == True
+        )
+    )
+    user_workshops = workshop_access.scalars().all()
+    if not user_workshops:
+        raise HTTPException(status_code=403, detail="Нет доступа к цехам")
+
+    workshop_ids = [wu.workshop_id for wu in user_workshops]
+    line_ids = [wu.line_id for wu in user_workshops if wu.line_id]
+
+    workshops_result = await db.execute(
+        select(Workshop).where(Workshop.id.in_(workshop_ids))
+    )
+    workshops = workshops_result.scalars().all()
+    has_all_workshops = any(w.name == 'Все цеха' for w in workshops)
+
+    printer_query = (
+        select(Printer)
+        .join(Line, Printer.line_id == Line.id)
+        .where(Printer.id == printer_id)
+    )
+    if not has_all_workshops:
+        if line_ids:
+            printer_query = printer_query.where(Line.id.in_(line_ids))
+        else:
+            printer_query = printer_query.where(Line.workshop_id.in_(workshop_ids))
+
+    printer = (await db.execute(printer_query)).scalar_one_or_none()
+    if not printer:
+        raise HTTPException(status_code=403, detail="Принтер недоступен или не найден")
+
+    status_result = await check_printer_status_async(
+        printer.ip_address,
+        printer.port_address,
+        printer.printer_type,
+        timeout=3.0,
+    )
+    is_available = bool(status_result.get('ok'))
+    return {
+        'ok': is_available,
+        'printer_id': str(printer.id),
+        'printer_name': printer.name,
+        'message': '' if is_available else printer_unavailable_message(
+            printer.name, status_result,
+        ),
+    }
+
 
 @router.get('/api/printing/templates')
 async def get_templates_for_product(

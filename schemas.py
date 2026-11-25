@@ -305,6 +305,7 @@ class CodeTemplateCreate(CodeTemplateBase):
     """Создание шаблона"""
     uip_include_batch: bool = Field(False, description='Включать партию в УИП')
     is_print_gtin_unit: bool = Field(False, description='Печатать DataMatrix-коды из внешнего сервиса')
+    disable_dm_positioning: bool = Field(False, description='Выключить позиционирование DataMatrix в редакторе')
 
 class CodeTemplateUpdate(BaseModel):
     product_id: Optional[UUID] = Field(None, description='UUID продукта')
@@ -315,6 +316,7 @@ class CodeTemplateUpdate(BaseModel):
     uip_include_batch: Optional[bool] = Field(None, description='Включать партию в УИП')
     is_print_gtin_unit: Optional[bool] = Field(None, description='Печатать DataMatrix-коды из внешнего сервиса')
     label_type: Optional[str] = Field(None, description='Назначение шаблона: unit — потребительская, group — групповая упаковка/набор')
+    disable_dm_positioning: Optional[bool] = Field(None, description='Выключить позиционирование DataMatrix в редакторе')
 
     @field_validator('label_type')
     @classmethod
@@ -324,6 +326,9 @@ class CodeTemplateUpdate(BaseModel):
 class CodeTemplateInDBBase(CodeTemplateBase):
     """Код шаблона из БД"""
     id: UUID
+    uip_include_batch: bool = Field(False, description='Включать партию в УИП')
+    is_print_gtin_unit: bool = Field(False, description='Печатать DataMatrix-коды из внешнего сервиса')
+    disable_dm_positioning: bool = Field(False, description='Выключить позиционирование DataMatrix в редакторе')
     created_at: datetime = Field(..., description='Дата добавления')
     edited_at: datetime = Field(..., description='Дата редактирования')
 
